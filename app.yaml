@@ -1,0 +1,9 @@
+command: ['python', '-m', 'capa_match.cli']
+env:
+  - name: CAPA_ENV
+    value: databricks
+  - name: MATCH_HOST
+    value: '0.0.0.0'
+health_check:
+  path: /api/v1/match/index
+  timeout_seconds: 300
