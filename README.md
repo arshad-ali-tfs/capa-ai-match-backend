@@ -162,15 +162,25 @@ Invoke-RestMethod -Method Post `
 
 For one site, replace `all_sites` with `site = "<exact site from /sites>"`. `top_k` accepts 1-50. Results retain exact source IDs, matched field/text, component scores and linked CAPA metadata.
 
-| Endpoint | Purpose |
+**Complete API inventory: 8 method-and-path operations, checked against this service's generated OpenAPI schema.** Each row links to its request parameters, response, saved changes and errors in the [detailed API reference](docs/API.md). GET and POST on the same URL count separately.
+
+### Service and source APIs
+
+| Method and path | Function |
 |---|---|
-| `GET /api/v1/match/health` | Process liveness |
-| `GET /api/v1/match/ready` | Source readiness only |
-| `GET /api/v1/match/index` | Index/model loading, source agreement and coverage |
-| `GET /api/v1/match/sites` | Allowed searchable sites |
-| `POST /api/v1/match/search` | One-site or all-allowed-site retrieval |
-| `GET /api/v1/match/matched-records/{pr_id}?site=...` | Complete indexed record and CAPA relationships within site scope |
-| `GET /api/v1/match/source` | Source identity and row accounting |
+| [`GET /api/v1/match/health`](docs/API.md#get-api-v1-match-health) | Check that the search API process responds. |
+| [`GET /api/v1/match/ready`](docs/API.md#get-api-v1-match-ready) | Check the configured source snapshot. |
+| [`GET /api/v1/match/capabilities`](docs/API.md#get-api-v1-match-capabilities) | Discover the service's declared feature flags. |
+| [`GET /api/v1/match/source`](docs/API.md#get-api-v1-match-source) | Inspect source identity and row accounting. |
+
+### Search and record inspection
+
+| Method and path | Function |
+|---|---|
+| [`GET /api/v1/match/index`](docs/API.md#get-api-v1-match-index) | Check the loaded index, embedding configuration and searchable coverage. |
+| [`GET /api/v1/match/sites`](docs/API.md#get-api-v1-match-sites) | List the configured sites that can be searched. |
+| [`POST /api/v1/match/search`](docs/API.md#post-api-v1-match-search) | Find historical deviations similar to the query within the chosen site scope. |
+| [`GET /api/v1/match/matched-records/{pr_id}`](docs/API.md#get-api-v1-match-matched-records-pr-id) | Inspect a complete indexed record within an allowed site. |
 
 Use `/docs` for interactive requests and `/openapi.json` for the schema. MATCH deliberately has no unscoped source-record browsing route.
 
