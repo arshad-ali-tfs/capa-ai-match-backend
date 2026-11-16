@@ -1,5 +1,7 @@
 # Databricks Apps deployment plan: MATCH
 
+For this service's standalone Docker image and local container startup, see [DOCKER.md](DOCKER.md). The Docker and Databricks Apps deployment paths are verified separately.
+
 This repository runs locally as one independent FastAPI service. app.yaml, dependency pins and a code-only staging command are included. No Databricks workspace deployment or Linux runtime validation has been performed here. The common frontend is deployed separately; its current design integrates MAP only.
 
 ## Prepare and verify locally

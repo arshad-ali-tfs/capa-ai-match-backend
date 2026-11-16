@@ -1,5 +1,7 @@
 # CAPA.AI MATCH backend
 
+Docker: [independent image, one-command startup and storage setup](DOCKER.md).
+
 Independent FastAPI service for finding similar historical deviations. The retained MPNet/Chroma, BM25 and Jaccard logic is packaged here with no imports from the old platform or another CAPA backend. The common React frontend remains a separate project; its MATCH design is still pending.
 
 Related repositories: [AUTHOR backend](https://github.com/rahul-jha-tfs/capa-ai-author-backend) and [common frontend](https://github.com/rahul-jha-tfs/capa-ai-frontend).

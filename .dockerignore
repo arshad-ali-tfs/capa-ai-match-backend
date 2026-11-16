@@ -1,0 +1,19 @@
+# Only build inputs enter the context; source data and local keys never do.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!requirements-lock.txt
+!src/
+!src/**
+!docker/
+!docker/healthcheck.py
+**/__pycache__
+**/__pycache__/**
+**/*.py[cod]
+**/*.egg-info
+**/*.egg-info/**
+**/.env*
+**/.cache/**
+**/.models/**
+**/*.sqlite3*
