@@ -15,6 +15,7 @@ data/*
 data/sources/*
 !data/sources/trackwise_records.csv
 !data/sources/README.md
+!data/runtime/
 *.sqlite3
 *.sqlite3-*
 *.db

@@ -7,7 +7,7 @@ from dotenv import dotenv_values, set_key
 from capa_match.cli import ROOT
 
 
-def main(argv=None):
+def main(argv=None, *, use_dotenv=True):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rebuild', '--replace', dest='rebuild', action='store_true', help='Publish a new generation while retaining previous files')
     parser.add_argument('--gtw', type=Path, help='Optional CSV identical to the configured snapshot export; import new data with bootstrap.py first')
@@ -24,7 +24,7 @@ def main(argv=None):
     parser.add_argument('--mock-embeddings', action='store_true', help='Offline demo only; no MPNet semantics')
     args = parser.parse_args(argv)
     config = dict(os.environ)
-    if os.getenv('CAPA_ENV', 'local') == 'local':
+    if use_dotenv and os.getenv('CAPA_ENV', 'local') == 'local':
         config.update({key: value for key, value in dotenv_values(ROOT / '.env').items() if value is not None})
     for key in ['CAPA_SOURCE_SNAPSHOT', 'CAPA_SOURCE_CSV', 'CAPA_DATA_DIR', 'MATCH_INDEX_DIR', 'MATCH_MODEL_CACHE']:
         value = config.get(key)
@@ -68,6 +68,8 @@ def main(argv=None):
         'division', 'site', 'limit', 'model', 'batch_size', 'runtime', 'chunk_size', 'chunk_overlap', 'text_field'))
 
     def activate(manifest):
+        if not use_dotenv:
+            return  # Container setup publishes configuration in mounted storage.
         set_key(str(ROOT / '.env'), 'MATCH_INDEX_DIR', str(target))
         set_key(str(ROOT / '.env'), 'MATCH_ALLOWED_SITES_JSON', json.dumps(sorted(manifest['site_counts'])))
         if manifest.get('embedding_backend') == 'MPNet':

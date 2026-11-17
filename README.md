@@ -62,68 +62,45 @@ Scores are ranking signals, not percentages of correctness. CAPA links come from
 
 ## Run locally
 
-Use PowerShell from **this repository's root**. Choose Docker or native Python for a given port.
-
-### Already configured on this machine
+Install Git for Windows and Docker Desktop, and start Docker's Linux engine. Host Python is not needed. From **this repository's root**, run:
 
 ```powershell
-# Docker Desktop must have its Linux engine running.
-.\Start-Docker.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1
 ```
 
-Or use the repo's native environment:
+For a fresh checkout, clone first:
 
 ```powershell
-.\Start-Match.ps1
-```
-
-Keep the terminal open. Visit [API docs](http://127.0.0.1:8102/docs); stop with **Ctrl+C**. A cold start loads the index/model and can take a few minutes on this workstation.
-
-### First setup on a new machine: native Python
-
-Install Git, Git LFS and **Python 3.11, 64-bit**:
-
-```powershell
-git lfs install
 git clone https://github.com/rahul-jha-tfs/capa-ai-match-backend.git
 cd capa-ai-match-backend
-git lfs pull
-.\Setup-Match.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1
 ```
 
-Skip the clone steps if you already have the repo. Setup creates `.venv` and `.env`, installs pinned dependencies and imports the bundled source. For another workbook, use `Setup-Match.ps1 -Source "C:\data\export.xlsx" -Sheet "Sheet1"`.
+The command retrieves missing Git LFS files, verifies the bundled source and pinned MPNet model, builds the Docker image, imports the source, prepares the verified full Linux index (or builds one for a new source) and configures its sites. It then starts the detached backend and verifies single-site and all-sites searches. **A ready message means search was tested, not just that the API process started.** No OpenAI key or paid model API calls are required.
 
-Then prepare the real index:
+Open [API docs](http://127.0.0.1:8102/docs). The backend continues running after the terminal closes. First setup downloads about 650 MiB of source, model and verified Linux index files. It imports the source and prepares 4,292 eligible deviations across 25 sites. New sources and explicit rebuilds print indexing progress and can take substantially longer. Index counts can be lower than source counts because MATCH keeps its existing eligibility rules. Models use the same MPNet revision, ONNX FP32 runtime, fields, chunking and ranking as before.
 
-1. Provision the MPNet cache under `data/models/huggingface`. For an initial download, set `HF_HUB_OFFLINE=0` and `TRANSFORMERS_OFFLINE=0` in local `.env`; return both to `1` after provisioning.
-2. Build the index against the imported source:
+### Repeat launches, updates and options
 
-```powershell
-.\.venv\Scripts\python.exe -m capa_match.build
-```
+After pulling changes, run the same command again. Docker reuses cached layers; unchanged source/model/index policy reuses the completed index. A changed source or index code creates a separate compatible index. Earlier generations remain available. Interrupted first builds can be retried by repeating the command; incomplete generations never become active.
 
-3. The builder writes the active index path, model and indexed site list into `.env`. Review `MATCH_ALLOWED_SITES_JSON` to expose only the intended indexed sites; an empty list grants no site access.
-4. Run `Start-Match.ps1` and verify an actual search.
+| Command option | Purpose |
+|---|---|
+| `-PrepareOnly` | Download, import and build the real index without starting the API |
+| `-Limit 5` | Prepare an explicitly limited pilot in a separate index; repeat with the same option to reuse it |
+| `-RebuildIndex` | Publish a new index generation for the same settings, retaining previous files |
+| `-Source "C:\data\export.xlsx" -Sheet "Sheet1"` | Import another workbook; subsequent launches retain the selected snapshot |
+| `-Stop` | Stop this managed container, retaining its source, models and indexes |
+| `-ContainerName capa-ai-match-demo -Port 18102` | Run a separate installation, using isolated data under `.local/<container-name>/data` by default |
+| `-DataDirectory`, `-EnvFile`, `-Image`, `-BatchSize` | Override storage, local configuration, image tag or indexing batch size |
 
-A clone includes the Git LFS source CSV. **The model cache, imported database and search index must be provisioned or built separately.** Index construction does not require an OpenAI key.
+Keep the same container/data/configuration options when updating or stopping an installation. Do not use the same writable index storage for independent MATCH containers. The launcher can upgrade an older MATCH container only when its image name and exact data mount match this installation. Containers owned by another checkout are left untouched; use a separate name, port and data directory for those.
 
-### First setup with Docker
-
-Follow [DOCKER.md](DOCKER.md) for container-side source import, MPNet provisioning and index preparation. Create `.env.docker` from [docker.env.example](docker.env.example); paths inside the container use `/data/...`.
-
-This workstation's separate copy at `data/match-index-linux` passed real Linux searches and restart checks. For another environment, validate a separate copy or build a compatible index there; copying an arbitrary Windows Chroma index is not proof of compatibility.
-
-Once configured, use `Start-Docker.ps1`. Rebuild after code changes with:
-
-```powershell
-.\Start-Docker.ps1 -Build
-```
-
-The launcher publishes 8102 and mounts `data` at `/data`. Use `-Port 18102` for another host port and update callers accordingly.
+`Setup-Match.ps1`, `Start-Match.ps1` and `Start-Docker.ps1` have been replaced by `Run-Match.ps1`. The helpers in `scripts/` remain for deployment packaging and deeper service verification; they are not prerequisites for starting MATCH. The source, pinned model files and verified reference index archive are versioned; generated databases, caches, new index generations and local settings stay outside Git. Allow several GB of free disk space for runtime preparation and Docker dependencies.
 
 ## Configuration
 
-Native Python reads `.env`; Docker reads `.env.docker`. Restart after changing settings or activating an index.
+The launcher creates `.env.docker` from `docker.env.example` if absent. It retains your local settings and writes resolved container configuration under the ignored `.local/<container-name>/runtime.env`. Source/index/model paths are filled automatically using the mounted data directory. Repeat the command after changing configuration. Advanced native CLI commands still read `.env`.
 
 | Setting | Purpose |
 |---|---|
@@ -132,7 +109,7 @@ Native Python reads `.env`; Docker reads `.env.docker`. Restart after changing s
 | `MATCH_INDEX_DIR` | Active directory containing `manifest.json` |
 | `MATCH_MODEL_CACHE` | Hugging Face cache for MPNet |
 | `MATCH_MODEL_NAME` | Checkpoint matching the index |
-| `MATCH_ALLOWED_SITES_JSON` | JSON array of indexed sites the service may search |
+| `MATCH_ALLOWED_SITES_JSON` | Local launcher: `auto` uses all indexed sites; an explicit JSON array restricts access. An empty array grants no access and fails setup. The API always receives a resolved array. |
 | `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` | Offline cache use after provisioning |
 
 The index manifest's source snapshot ID must match the configured source. Missing or incompatible assets return an error instead of silently substituting demo results. Explicit mock embeddings exist for offline demonstrations and are labelled unsuitable for real search.
@@ -215,8 +192,9 @@ src/match_v1/              Retained MPNet/Chroma and hybrid retrieval engine
 scripts/verify_local.py     Real index/search/API smoke checks
 scripts/prepare_deployment.py  Code-only deployment staging
 tests/                     Offline and optional real-model checks
-Start-Match.ps1             Native launcher
-Start-Docker.ps1            Independent Docker launcher
+Run-Match.ps1               Complete Docker setup, real index build and verified API startup
+runtime-assets.json         Sizes and SHA-256 checks for the versioned runtime bundle
+data/runtime/               Pinned MPNet files and verified full Linux index archive
 ```
 
 ## Verify your setup
@@ -237,7 +215,7 @@ Set `MATCH_RUN_INTEGRATION=1` to enable the optional heavier integration suite. 
 | API alive but `/index` returns 503 | Index path, model cache, source identity and logs; health alone does not validate search |
 | HTTP 403 for a site | Use an indexed site allowed by `MATCH_ALLOWED_SITES_JSON`; all-sites still obeys it |
 | Source/index mismatch | Rebuild against the configured source; do not edit the manifest to bypass the check |
-| Offline model load fails | Provision the MPNet cache and required runtime assets |
+| Offline model load fails | Repeat `Run-Match.ps1`; review the reported file/checksum or Git LFS error |
 | Slow first request | Allow index/model loading; subsequent calls reuse them |
 | AUTHOR cannot reach Docker MATCH | Use `capa-ai-match:8102` on their network, not `localhost` inside AUTHOR |
 | CSV is an LFS pointer | Run `git lfs pull` before import |

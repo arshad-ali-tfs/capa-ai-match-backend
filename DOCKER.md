@@ -1,85 +1,55 @@
-# MATCH Docker image
+# MATCH Docker setup
 
-This repository builds one independent Linux/amd64 image using Python 3.11 and the existing dependency lock. It starts the existing MATCH launcher, without changing models, prompts or business workflows. Other backend repositories are not build inputs.
+Run from the repository root with Docker Desktop using Linux containers:
 
-## Prepare once
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1
+```
 
-Install Docker Desktop with its Linux engine (or Docker Engine on Linux). From this repository:
+This single command retrieves missing Git LFS assets, verifies the bundled source and pinned MPNet files, builds the image, imports the source, prepares the verified full Linux index (or builds one for another source), starts the backend and verifies single-site/all-sites searches. No host Python, separate model provisioning, manual index activation or OpenAI credentials are needed. Ordinary searches use the local model.
 
-~~~powershell
-Copy-Item docker.env.example .env.docker
-~~~
+The detached service is available at http://127.0.0.1:8102/docs and continues after the terminal closes. The bundled source uses a verified index containing 4,292 records and 24,440 chunks. Source import and model readiness can take several minutes. A new source or explicit rebuild computes new embeddings and can take substantially longer, with chunk progress shown. The default indexes every record eligible under the existing DPD/status/record rules, using the unchanged MPNet ONNX FP32 model, fields, chunking and ranking.
 
-Edit `.env.docker` with container paths and service settings. For example, a host file under `data/sources/` appears under `/data/sources/` in the container. Do not copy Windows paths or shell quotes into this file. Keys stay in this ignored local file and are injected at runtime.
+## Updates and recovery
 
-Fetch the source CSV with `git lfs pull` when using the bundled source. Prepare the snapshot and service assets described below. The build context excludes source exports, databases, model caches, runs, local environments, Git history and credentials.
+After pulling code, repeat the same command. It rebuilds changed Docker layers and reuses the completed index when its source, model and index code are compatible. Changed settings create a separate index. `-RebuildIndex` explicitly publishes a new generation while retaining previous files. Incomplete builds never replace an active generation; repeating a failed first setup retries safely.
 
-## One command to start this service
+```powershell
+# Prepare the real source, model and index without starting the API.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1 -PrepareOnly
 
-~~~powershell
-.\Start-Docker.ps1
-~~~
+# Stop the managed container while retaining all data.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1 -Stop
 
-The launcher builds `capa-ai-match:local` when it is missing, creates/reuses the `capa-ai` network, mounts this repo's `data` directory at `/data`, and starts only MATCH. It runs as UID/GID 10001, binds the application to `0.0.0.0:8102` inside Docker, and publishes it on `127.0.0.1:8102` on the laptop.
+# Use a separate installation with isolated data and another host port.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1 -ContainerName capa-ai-match-demo -Port 18102
+```
 
-API documentation: http://127.0.0.1:8102/docs. Stop with Ctrl+C. The container is removed on exit; mounted data is retained.
+`-Source "C:\data\export.xlsx" -Sheet "Sheet1"` imports another workbook; subsequent runs retain the chosen snapshot. `-Limit 5` builds a clearly limited pilot under a separate index identity. Repeat the same options when updating or stopping a custom installation. Other options are `-DataDirectory`, `-EnvFile`, `-Image` and `-BatchSize`.
 
-After changing code, rebuild explicitly:
+## Configuration and storage
 
-~~~powershell
-.\Start-Docker.ps1 -Build
-~~~
+The launcher creates the ignored `.env.docker` if absent and preserves its settings. `MATCH_ALLOWED_SITES_JSON=auto` is a local setup choice for all indexed sites; an explicit JSON array restricts access and is never widened. An empty array grants no access and fails preparation. The API receives a resolved site array, not the word auto.
 
-If the native backend already uses 8102, choose another host port:
+Resolved configuration and setup logs live under `.local/<container-name>/`. Persistent source snapshots, MPNet cache and versioned indexes live in the selected data directory, mounted at `/data`. Container-local paths are filled automatically. Do not put Windows paths into Docker configuration.
 
-~~~powershell
-.\Start-Docker.ps1 -Port 18102
-~~~
+The service runs as UID/GID 10001. On Linux, grant this user access to mounted storage. Independent MATCH installations must use different writable data directories. A previous launcher container is upgraded only when its image name and exact data mount match this installation; unrelated containers are left untouched. Builds/preparation complete before the existing service is replaced.
 
-`-DataDirectory`, `-EnvFile` and `-Image` also accept overrides. Keep separate writable data directories for different services. On Linux, grant UID/GID 10001 access to the mounted data directory, or use `docker run --user` with a suitable host UID/GID. A mounted directory's permissions override the image directory's permissions.
+The image contains service code and dependency pins. Source exports, model weights, indexes, local environments and credentials are excluded from the build context and supplied through mounts. The source, pinned model bundle and verified Linux index archive are versioned in Git/Git LFS; generated indexes and caches remain local. MPNet attribution is retained in `data/runtime/mpnet/README.md`.
 
-## Build and run without the Windows helper
+The bundled index was checked against the bundled CSV: every indexed record, narrative chunk and CAPA link matches. The versioned runtime manifest records the two validated source identities: the original workbook snapshot and its canonical CSV import. Setup binds a fresh index copy to the selected validated identity, preserving original IDs and vectors. Other sources or incompatible index/model versions use the real builder. Do not edit an index manifest manually to bypass a source mismatch.
 
-~~~bash
-docker build --platform linux/amd64 --tag capa-ai-match:local .
-docker network create capa-ai
-docker run --rm --init --platform linux/amd64 --name capa-ai-match --network capa-ai --publish 127.0.0.1:8102:8102 --env-file .env.docker --mount "type=bind,source=$(pwd)/data,target=/data" capa-ai-match:local
-~~~
+## Verify and diagnose
 
-Create the network only once; reuse it if it already exists. The Dockerfile also accepts `--build-arg PYTHON_IMAGE=...` to use an approved Python 3.11 Debian Bookworm image, including a digest-pinned image.
+```powershell
+docker logs --tail 50 capa-ai-match
+docker exec capa-ai-match python -m capa_match.docker_setup verify
+```
 
-## Source and persistent storage
+The entry command already runs this real-search verification. The regular container health probe proves process liveness; source readiness alone does not prove search readiness. A success message is printed only after the real index and both search scopes respond.
 
-For an existing local installation, reuse its `data` folder and set `CAPA_SOURCE_SNAPSHOT=/data/sources/<actual-snapshot-id>.sqlite3` and `CAPA_SOURCE_CSV=/data/sources/<actual-snapshot-id>.csv`. The three services should reference the same source snapshot identity.
+Setup logs include checksum, source, Docker and index build errors. No fake vectors or sample-result fallback is used. Git/repository access, Docker Desktop's Linux engine and enough local disk/memory remain prerequisites. Missing asset downloads require network access; indexing and search use the bundled model offline.
 
-For a fresh folder, build the image first, place the CSV in `data/sources/trackwise_records.csv`, then import it using the existing service command:
+The three old PowerShell setup/start commands have been removed. `scripts/prepare_deployment.py` and `scripts/verify_local.py` remain administrative packaging and deeper verification tools, not extra setup steps. The Dockerfile can also be built by standard Docker tooling, including an approved `PYTHON_IMAGE` build argument.
 
-~~~powershell
-docker build --platform linux/amd64 --tag capa-ai-match:local .
-$dataPath = (Resolve-Path .\data).Path
-docker run --rm --env-file .env.docker --mount "type=bind,source=$dataPath,target=/data" capa-ai-match:local match-import /data/sources/trackwise_records.csv
-~~~
-
-Use `--sheet Sheet1` for an XLSX workbook as needed. The import prints the snapshot ID. Set the two `CAPA_SOURCE_*` paths in the host `.env.docker` to the generated `/data/sources/<id>.sqlite3` and `/data/sources/<id>.csv` files. Import commands write a container-local `/app/.env`; that file is temporary and does not update the host configuration automatically.
-
-Mount the MPNet cache at `/data/models/huggingface`. On this workstation, a separate copy of the existing index at `/data/match-index-linux` passed real Linux queries and reopened after a restart. It was not rebuilt. For another installation, validate a separate copy first or build a new Linux index; do not assume Windows Chroma/HNSW files are portable:
-
-~~~powershell
-$dataPath = (Resolve-Path .\data).Path
-docker run --rm --env-file .env.docker --mount "type=bind,source=$dataPath,target=/data" capa-ai-match:local match-build --index-dir /data/match-index-linux
-~~~
-
-Set `MATCH_INDEX_DIR=/data/match-index-linux`. Set `MATCH_ALLOWED_SITES_JSON` to a plain JSON array containing the approved keys from that directory's `manifest.json` `site_counts` object. Index activation writes a temporary container-local `/app/.env`; copy these settings to the host `.env.docker` before starting the server. Keep the existing checkpoint, text fields and ranking settings. The image includes CPU-only Torch at the existing version. A first model download requires explicitly setting `HF_HUB_OFFLINE=0` and `TRANSFORMERS_OFFLINE=0`; switch them back after provisioning the cache.
-
-The source snapshot, CSV, model cache and index generation must agree. Do not rebuild an index while a running server is using it. An empty allowed-site list grants no site access.
-
-## Verify
-
-~~~powershell
-docker inspect --format '{{json .State.Health}}' capa-ai-match
-docker exec capa-ai-match python /opt/capa/healthcheck.py --path /api/v1/match/index --timeout 180
-~~~
-
-The built-in Docker health check probes only `/api/v1/match/health`, which proves the API process is alive. The explicit command above checks index/model readiness and source compatibility; also run an actual allowed-site search. Missing source data or model assets produce an unavailable response rather than sample results.
-
-This Docker configuration is independent of the Databricks Apps `app.yaml` source-deployment path in [DEPLOYMENT.md](DEPLOYMENT.md). Keep the existing identity, storage and target-environment validation steps for deployment. No Compose file is required.
+This local Docker path is separate from the Databricks Apps deployment plan in [DEPLOYMENT.md](DEPLOYMENT.md). Target workspace storage, service identity, resource sizing and permissions still require deployment verification.

@@ -10,12 +10,12 @@
 
 The original import contained 19,644 rows: 19,643 were accepted and one duplicate ID was held in the local database quarantine. This CSV is the existing accepted-record export, not the raw file containing that duplicate. Renaming it did not change its contents. The existing local database retains the original import metadata and quarantine.
 
-The readable filename is stable. Generated database snapshots keep content-based IDs for provenance and remain ignored, as do model assets and saved analyses. After replacing this source, use the import command rather than manually editing a database. A new import has its own snapshot identity; existing saved analyses remain associated with the snapshot that created them.
+The readable filename is stable. Generated database snapshots keep content-based IDs for provenance and remain ignored, as do generated caches and new index generations. The pinned runtime model and verified reference index archive are supplied under `data/runtime/`. After replacing this source, use the launcher to import it rather than manually editing a database. A new import has its own snapshot identity.
 
 From the backend repository root, initialize the source on a new machine with:
 
 ```powershell
-.\Setup-Match.ps1 -Source ".\data\sources\trackwise_records.csv"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1
 ```
 
-An alternative CSV/XLSX can be supplied to the same setup command. The included CSV is repository data, not a package asset in the Python wheel. For Databricks, provision it into data storage separately from the app-source upload as described in [deployment preparation](../../DEPLOYMENT.md).
+Use `-Source "C:\data\export.xlsx" -Sheet "Sheet1"` for another workbook. The command also prepares the model/index and verifies real API searches. The included CSV is repository data, not a package asset in the Python wheel. For Databricks, provision it into data storage separately from the app-source upload as described in [deployment preparation](../../DEPLOYMENT.md).

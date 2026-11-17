@@ -27,6 +27,7 @@ RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.or
     && python -m pip install --no-cache-dir -r requirements-lock.txt
 
 COPY pyproject.toml ./
+COPY runtime-assets.json ./
 COPY src/ ./src/
 COPY docker/healthcheck.py /opt/capa/healthcheck.py
 RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation -e . \

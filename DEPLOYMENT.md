@@ -2,13 +2,13 @@
 
 For this service's standalone Docker image and local container startup, see [DOCKER.md](DOCKER.md). The Docker and Databricks Apps deployment paths are verified separately.
 
-This repository runs locally as one independent FastAPI service. app.yaml, dependency pins and a code-only staging command are included. No Databricks workspace deployment or Linux runtime validation has been performed here. The common frontend is deployed separately; its current design integrates MAP only.
+This repository runs locally as one independent FastAPI service. app.yaml, dependency pins and a code-only staging command are included. Local Linux Docker execution is verified separately from Databricks deployment, which has not been performed. The common frontend is deployed separately; its current design integrates MAP only.
 
 ## Prepare and verify locally
 
-1. Use Python 3.11 and this folder as the repository root. Run Setup-Match.ps1, configure local .env and start Start-Match.ps1. Follow README.md for source/model provisioning.
+1. Start Docker Desktop's Linux engine and run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1` from this repository. It provisions the source/model, builds a real index, starts MATCH and verifies searches. No host Python or separate model handover is needed for this local path.
 2. Run the offline tests, pip check and the real-service smoke script described in VERIFICATION.md. For MATCH, rebuild an index after changing the source; never reuse an unrelated generation. For AUTHOR, verify cases and originals after restarting the service.
-3. Fetch the included CSV with Git LFS. The source export is versioned; database snapshots, indexes, models, credentials and generated cases are ignored. Publish this folder as its own private GitHub repository only when requested.
+3. The source CSV, pinned model files and verified Linux reference index archive are versioned through Git/Git LFS. Database snapshots, generated model caches, new index generations and credentials stay outside Git. Runtime assets remain outside the code-only app upload.
 4. Prepare a clean upload from this repository root:
 
 ```powershell

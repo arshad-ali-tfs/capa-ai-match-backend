@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "embedding_model": "sentence-transformers/all-mpnet-base-v2",
+  "embedding_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+  "model_directory": "data/runtime/mpnet",
+  "files": [
+    {
+      "path": "data/sources/trackwise_records.csv",
+      "size_bytes": 121397555,
+      "sha256": "475eb66c11a4af2b506aab869cd20b88748243d896e8414affc59387ba74d840"
+    },
+    {
+      "path": "data/runtime/mpnet/README.md",
+      "size_bytes": 11612,
+      "sha256": "89a1a9c3290fe58e76c939b578c48a14331dc7bfcaaf5a53102adb183da6f96a"
+    },
+    {
+      "path": "data/runtime/mpnet/config.json",
+      "size_bytes": 571,
+      "sha256": "d46a3e04ded82bba22528424480697d394eeda6a27484e08c5bb2bdf5906cfa0"
+    },
+    {
+      "path": "data/runtime/mpnet/config_sentence_transformers.json",
+      "size_bytes": 116,
+      "sha256": "061ca9d39661d6c6d6de5ba27f79a1cd5770ea247f8d46412a68a498dc5ac9f3"
+    },
+    {
+      "path": "data/runtime/mpnet/modules.json",
+      "size_bytes": 349,
+      "sha256": "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf"
+    },
+    {
+      "path": "data/runtime/mpnet/sentence_bert_config.json",
+      "size_bytes": 53,
+      "sha256": "cabfacded9272091a06ff595a46ef027a76ddf4ac9e77d0fcf11c605748f1667"
+    },
+    {
+      "path": "data/runtime/mpnet/special_tokens_map.json",
+      "size_bytes": 239,
+      "sha256": "9ef40e9c160511bf3f46ceb71f1471dafa1e9473d5120bb816c36b2efa75f8ba"
+    },
+    {
+      "path": "data/runtime/mpnet/tokenizer.json",
+      "size_bytes": 466021,
+      "sha256": "b8be2c30ba5dd723a6d5ee26d013da103d5408d92ddcb23747622f9e48f1d842"
+    },
+    {
+      "path": "data/runtime/mpnet/tokenizer_config.json",
+      "size_bytes": 363,
+      "sha256": "67f2ff7e223518e729869bb3a70f0caf8368fe549383fc11cfe2dfb42fffc268"
+    },
+    {
+      "path": "data/runtime/mpnet/vocab.txt",
+      "size_bytes": 231536,
+      "sha256": "dbd90cb94e2247bd4d4ccaecbf616d2290e66691d7d5e5bb81f063c2d0649ada"
+    },
+    {
+      "path": "data/runtime/mpnet/1_Pooling/config.json",
+      "size_bytes": 190,
+      "sha256": "a37f83ada23e7887be6b88f4998927dbeac0038af301553c7cd5461413bf1a56"
+    },
+    {
+      "path": "data/runtime/mpnet/onnx/model_O2.onnx",
+      "size_bytes": 435666661,
+      "sha256": "14d01256f5f3d2245b15b596173bca4367c9405fde5700dd7fb4e110708c1793"
+    },
+    {
+      "path": "data/runtime/match-index-linux.tar.gz",
+      "size_bytes": 121587093,
+      "sha256": "a72121cabee2124f3b1b042cfce555615f6b7e0fe698bc6ee255a323e49e2eda"
+    }
+  ],
+  "bundled_index": {
+    "path": "data/runtime/match-index-linux.tar.gz",
+    "policy": {
+      "snapshot": "08944a8787bf16389387017301da807eee7f7a8afb3f0e4e7659880ed6ac963c",
+      "model": "sentence-transformers/all-mpnet-base-v2",
+      "revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+      "runtime": "onnx-fp32",
+      "division": "DPD",
+      "limit": 0,
+      "chunk_size": 500,
+      "chunk_overlap": 50,
+      "text_fields": [
+        "DETAILED_DESCRIPTION",
+        "CONCLUSION"
+      ]
+    },
+    "contract": {
+      "versions": {
+        "chromadb": "1.5.9",
+        "onnxruntime": "1.31.1",
+        "sentence-transformers": "5.7.0"
+      },
+      "code": {
+        "src/match_v1/core.py": "3ca889da7309cd131f1ad6a2f8dcae25b15a51e2bc073645d7c484efa1ac5fb4",
+        "src/match_v1/index.py": "2de40bcb0117198daf4747bd717cee3f69f9dad103ea9d02ea26ed889bdb7547",
+        "src/match_v1/ingest.py": "443813a4b99ccc3e75a8017bb1650e4a301c067be68b52b406ae2824dd64158c",
+        "src/match_v1/search.py": "3ddd8f5da3d17499612c69dd1a8636f573ad422d04e4dffc19e5845746cbafb4",
+        "src/capa_match/build.py": "d51de38569e45ea2238dbaaa41607eb82211feca1257164cd292c2bf4ce81b86",
+        "src/capa_match/identifiers.py": "d3d99a19584a94cc98959568117c3dd9e4d42f8501117f33b72f8405ce5863da"
+      }
+    },
+    "equivalent_snapshot_ids": [
+      "08944a8787bf16389387017301da807eee7f7a8afb3f0e4e7659880ed6ac963c",
+      "b658a555be5ec4c9a7e4018f8e4cdcb9c604418fb5b5370fe953576521ddc655"
+    ],
+    "source_equivalence": {
+      "records_identical": 4292,
+      "chunks_identical": 24440,
+      "capas_identical": true,
+      "old_snapshot": "08944a8787bf16389387017301da807eee7f7a8afb3f0e4e7659880ed6ac963c",
+      "canonical_csv_snapshot": "b658a555be5ec4c9a7e4018f8e4cdcb9c604418fb5b5370fe953576521ddc655"
+    }
+  }
+}

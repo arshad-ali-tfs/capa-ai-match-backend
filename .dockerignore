@@ -3,6 +3,7 @@
 !Dockerfile
 !.dockerignore
 !pyproject.toml
+!runtime-assets.json
 !requirements-lock.txt
 !src/
 !src/**
