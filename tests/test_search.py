@@ -49,9 +49,11 @@ def test_unauthorized_site_is_rejected():
         srvc.record('105', site='GRC (Greenville, NC)')
 
 
-def test_short_query_rejected():
+def test_short_keywords_search_and_meaningless_query_is_rejected():
+    result = make_service().search('HPLC', site='TRO (Toronto)')
+    assert result['search_mode'] == 'keyword' and result['results']
     with pytest.raises(ValueError):
-        make_service().search('HPLC', site='TRO (Toronto)')
+        make_service().search('???', site='TRO (Toronto)')
 
 
 def test_retrieval_with_keyword_candidates_not_in_semantic_topk():
@@ -96,7 +98,7 @@ def test_all_sites_ranks_one_combined_corpus_and_preserves_single_site_results()
     assert result['result_count'] == 8
     assert {row['site'] for row in result['results']} == service.allowed_sites
     assert len({row['pr_id'] for row in result['results']}) == 8
-    scores = [row['match_score'] for row in result['results']]
+    scores = [row.get('relevance_score', row['match_score']) for row in result['results']]
     assert scores == sorted(scores, reverse=True)
     for row in result['results']:
         expected = .7 * row['semantic_score'] + .2 * row['bm25_score'] + .1 * row['jaccard_score']

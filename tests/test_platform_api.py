@@ -120,7 +120,7 @@ def test_supported_result_limits(platform_client, top_k):
     assert response.json()['result_count'] == min(top_k, 6)
 
 
-@pytest.mark.parametrize('changes', [{'top_k': 0}, {'top_k': 51}, {'query': 'short'}, {'query': 'x' * 30001}, {'site': ''}])
+@pytest.mark.parametrize('changes', [{'top_k': 0}, {'top_k': 51}, {'mode': 'made-up'}, {'query': 'x' * 30001}, {'site': ''}])
 def test_request_boundaries(platform_client, changes):
     client, _, _ = platform_client
     assert client.post('/api/v1/match/search', json={'query': QUERY, 'site': SITE, **changes}).status_code == 422
@@ -128,7 +128,7 @@ def test_request_boundaries(platform_client, changes):
 
 def test_meaningless_query_and_site_boundaries(platform_client):
     client, _, _ = platform_client
-    assert client.post('/api/v1/match/search', json={'query': '        ', 'site': SITE}).status_code == 400
+    assert client.post('/api/v1/match/search', json={'query': '???', 'site': SITE}).status_code == 400
     assert client.post('/api/v1/match/search', json={'query': QUERY, 'site': 'GRC (Greenville, NC)'}).status_code == 403
     assert client.get('/api/v1/match/matched-records/105', params={'site': SITE}).status_code == 404
     assert client.get('/api/v1/match/matched-records/105', params={'site': 'GRC (Greenville, NC)'}).status_code == 403
@@ -163,6 +163,17 @@ def test_local_model_metadata_hides_host_directory(platform_client, model):
     assert client.get('/api/v1/match/index').json()['model_name'] == 'mpnet'
     result = client.post('/api/v1/match/search', json={'query': QUERY, 'site': SITE})
     assert result.status_code == 200 and result.json()['model_name'] == 'mpnet'
+
+
+@pytest.mark.parametrize('mode', [None, 'auto', 'semantic'])
+def test_model_file_access_failure_is_unavailability_not_a_site_denial(platform_client, mode):
+    client, service, _ = platform_client
+    def inaccessible(_):
+        raise PermissionError('private-model-directory is inaccessible')
+    service.embedder.encode = inaccessible
+    response = client.post('/api/v1/match/search', json={'query': QUERY, 'site': SITE, **({'mode': mode} if mode else {})})
+    assert response.status_code == 503
+    assert 'private-model-directory' not in response.text
 
 
 def test_all_sites_api_returns_combined_results_and_site_scoped_details(platform_client):

@@ -19,14 +19,15 @@ from match_v1.testing import MemoryCollection
 @pytest.fixture
 def leading_zero_source(tmp_path, monkeypatch):
     source = tmp_path / 'fictional.csv'
-    fields = ['PR_ID', 'PARENT_ID', 'SITE', 'PSG_Division', 'RECORD_TYPE', 'STATUS', 'DETAILED_DESCRIPTION', 'RECORD_NAME']
+    fields = ['PR_ID', 'PARENT_ID', 'SITE', 'PSG_Division', 'RECORD_TYPE', 'STATUS', 'DETAILED_DESCRIPTION', 'RECORD_NAME', 'INVESTIGATION']
     with source.open('w', encoding='utf8', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         for pr_id, kind, site, parent in [('00042', 'Deviation', 'Site A', ''), ('00043', 'Deviation', 'Site B', ''), ('00901', 'CAPA', 'Site A', '00042')]:
             writer.writerow({'PR_ID': pr_id, 'PARENT_ID': parent, 'SITE': site, 'PSG_Division': 'DPD',
                              'RECORD_TYPE': kind, 'STATUS': 'Closed - Done', 'RECORD_NAME': 'Fictional bracket event',
-                             'DETAILED_DESCRIPTION': 'FICTIONAL TEST: verification bracket failed before testing.'})
+                             'DETAILED_DESCRIPTION': 'FICTIONAL TEST: verification bracket failed before testing.',
+                             'INVESTIGATION': 'FICTIONAL: equipment EQ-900 investigation-only evidence.' if pr_id == '00042' else ''})
     snapshot = import_snapshot(source, tmp_path / 'snapshots')
     repository = SqliteRecordRepository(snapshot)
     records, capas, _ = load_gtw(source, limit=0)
@@ -100,3 +101,17 @@ def test_all_sites_preserves_exact_ids_and_capa_links(leading_zero_source):
         assert records['00042']['related_capas'][0]['pr_id'] == '00901'
         assert records['00043']['site'] == 'Site B'
         assert client.get('/api/v1/match/matched-records/00043', params={'site': records['00043']['site']}).status_code == 200
+
+
+def test_investigation_only_identifiers_are_searchable_and_details_retain_their_field(leading_zero_source):
+    with TestClient(main.app) as client:
+        response = client.post('/api/v1/match/search', json={'query': 'EQ900', 'mode': 'auto', 'all_sites': True})
+        assert response.status_code == 200
+        result = response.json()
+        assert result['total_matches'] == 1 and result['results'][0]['pr_id'] == '00042'
+        assert result['results'][0]['matched_field'] == 'INVESTIGATION'
+        assert result['results'][0]['match_score'] is None
+        detail = client.get('/api/v1/match/matched-records/00042', params={'site': 'Site A'}).json()
+        assert detail['literal_field_texts']['INVESTIGATION'] == 'FICTIONAL: equipment EQ-900 investigation-only evidence.'
+        denied = client.post('/api/v1/match/search', json={'query': 'EQ900', 'mode': 'auto', 'site': 'Site B'})
+        assert denied.status_code == 403

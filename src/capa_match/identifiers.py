@@ -13,6 +13,7 @@ class SourceIdentity:
 
 class SourceIdentifiers:
     def __init__(self, repository):
+        self.repository = repository
         self.snapshot_id = repository.metadata()['snapshot_id']
         self.by_match_id: dict[str, SourceIdentity] = {}
         # Read identity columns once; never load source narratives to map IDs.
@@ -29,6 +30,21 @@ class SourceIdentifiers:
                         f'and {identity.pr_id!r} both normalize to {internal!r}. '
                         'Resolve the source identifiers and import a new snapshot before building MATCH.')
                 self.by_match_id[internal] = identity
+
+    def literal_documents(self, match_ids):
+        """Load only investigation text for known indexed deviations, on demand."""
+        external = {self.identity(key, record_type='deviation').pr_id: key for key in match_ids}
+        identifiers = list(external)
+        result = {}
+        with self.repository._connect() as database:
+            for offset in range(0, len(identifiers), 400):
+                batch = identifiers[offset:offset + 400]
+                query = "SELECT pr_id,json_extract(fields,'$.investigation') AS investigation FROM records WHERE pr_id IN (" + ','.join('?' for _ in batch) + ')'
+                for row in database.execute(query, batch):
+                    text = str(row['investigation'] or '')
+                    if text.strip():
+                        result[external[row['pr_id']]] = {'INVESTIGATION': text}
+        return result
 
     def identity(self, match_id, *, site=None, record_type=None):
         identity = self.by_match_id.get(str(match_id))
@@ -63,12 +79,25 @@ class SnapshotMatchService:
         identifiers.validate_index(service)
         self.service = service
         self.identifiers = identifiers
+        self.service.source_ids = {key: identifiers.identity(key, site=record['site'], record_type='deviation').pr_id
+                                   for key, record in service.records.items()}
+        self.service.additional_documents_loader = lambda: identifiers.literal_documents(service.records)
 
     def __getattr__(self, name):
         return getattr(self.service, name)
 
-    def search(self, query, *, site=None, all_sites=False, top_k=10):
-        result = self.service.search(query, site=site, all_sites=all_sites, top_k=top_k)
+    def search(self, query='', *, site=None, all_sites=False, top_k=10, filters=None, mode='auto', offset=0):
+        result = self.service.search(query, site=site, all_sites=all_sites, top_k=top_k,
+                                     filters=filters, mode=mode, offset=offset)
+        return {**result, 'source_snapshot_id': self.identifiers.snapshot_id,
+                'results': [self.identifiers.external_record(record) for record in result['results']]}
+
+    def facets(self, *, site=None, all_sites=False, filters=None):
+        return {**self.service.facets(site=site, all_sites=all_sites, filters=filters),
+                'source_snapshot_id': self.identifiers.snapshot_id}
+
+    def search_legacy(self, query, *, site=None, all_sites=False, top_k=10):
+        result = self.service.search_legacy(query, site=site, all_sites=all_sites, top_k=top_k)
         return {**result, 'source_snapshot_id': self.identifiers.snapshot_id,
                 'results': [self.identifiers.external_record(record) for record in result['results']]}
 
@@ -80,4 +109,8 @@ class SnapshotMatchService:
         external = self.identifiers.external_record(record)
         if external['pr_id'] != source_pr_id:
             raise KeyError('Record not found for this exact source identifier.')
+        additional = self.identifiers.literal_documents([internal]).get(internal, {})
+        additional = {name: text for name, text in additional.items() if name not in record.get('indexed_field_texts', {})}
+        if additional:
+            external['literal_field_texts'] = additional
         return external

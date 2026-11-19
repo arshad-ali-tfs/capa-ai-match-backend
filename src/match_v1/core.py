@@ -205,19 +205,24 @@ class ONNXMPNetEmbedder:
             import onnxruntime as ort
             from transformers import AutoTokenizer
             from huggingface_hub import hf_hub_download
+            from huggingface_hub.errors import LocalEntryNotFoundError
             cache = os.environ.get('MATCH_MODEL_CACHE',
                                    str(Path(__file__).resolve().parent.parent / '.cache' / 'models'))
             def artifact(name):
                 if Path(self.model_name).is_dir():
                     return str(Path(self.model_name) / name)
-                return hf_hub_download(self.model_name, filename=name, cache_dir=cache)
+                try:
+                    return hf_hub_download(self.model_name, filename=name, cache_dir=cache, local_files_only=True)
+                except LocalEntryNotFoundError:
+                    return hf_hub_download(self.model_name, filename=name, cache_dir=cache)
             pooling = json.loads(Path(artifact('1_Pooling/config.json')).read_text(encoding='utf-8'))
             modes = [name for name, enabled in pooling.items() if name.startswith('pooling_mode_') and enabled]
             if modes != ['pooling_mode_mean_tokens']:
                 raise ValueError('ONNX runtime requires the base MPNet mean-pooling configuration')
             config = json.loads(Path(artifact('sentence_bert_config.json')).read_text(encoding='utf-8'))
             self.max_length = int(config['max_seq_length'])
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, cache_dir=cache)
+            snapshot = Path(artifact('config.json')).parent
+            self._tokenizer = AutoTokenizer.from_pretrained(str(snapshot), local_files_only=True)
             options = ort.SessionOptions()
             options.intra_op_num_threads = min(4, os.cpu_count() or 1)
             options.inter_op_num_threads = 1

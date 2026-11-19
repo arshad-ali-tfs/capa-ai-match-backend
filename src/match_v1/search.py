@@ -11,6 +11,10 @@ from .core import BM25, MockEmbedder, MPNetEmbedder, jaccard, split_chunks, toke
 LOG = logging.getLogger(__name__)
 
 
+class SiteAccessError(PermissionError):
+    """A site-scope denial, distinct from filesystem/model PermissionError."""
+
+
 class MatchService:
     def __init__(self, *, manifest: dict, records: dict[str, dict], chunks: list[dict],
                  capas: dict[str, list[dict]], collection, embedder,
@@ -28,6 +32,9 @@ class MatchService:
         self.allowed_sites = allowed_sites
         self.candidate_k = candidate_k
         self._corpus_caches: dict[tuple[str, ...], tuple[list[dict], BM25]] = {}
+        self._explorer = None
+        self.source_ids = {key: key for key in records}
+        self.additional_documents_loader = None
         if embedder.model_name != manifest['model_name']:
             raise ValueError(f'Query model mismatch: {embedder.model_name!r} vs indexed {manifest["model_name"]!r}. Rebuild or set MATCH_MODEL_NAME.')
         if manifest.get('embedding_runtime', 'torch') != getattr(embedder, 'runtime', 'mock' if isinstance(embedder, MockEmbedder) else 'torch') and manifest.get('embedding_backend') == 'MPNet':
@@ -40,12 +47,15 @@ class MatchService:
 
     def _authorized_site(self, site: str) -> str:
         if not site or site not in self.allowed_sites:
-            raise PermissionError(f'Site {site!r} is not in the server-allowed list')
+            raise SiteAccessError(f'Site {site!r} is not in the server-allowed list')
         if site not in self.manifest.get('site_counts', {}):
             raise ValueError(f'No indexed records for site {site!r}')
         return site
 
-    def _scope_corpus(self, sites: tuple[str, ...]) -> tuple[list[dict], BM25]:
+    def _scope_corpus(self, sites: tuple[str, ...], record_ids=None) -> tuple[list[dict], BM25]:
+        if record_ids is not None:
+            subset = [c for c in self.chunks if c['site'] in sites and c['pr_id'] in record_ids]
+            return subset, BM25([tokenize(c['doc']) for c in subset])
         if sites not in self._corpus_caches:
             selected = set(sites)
             subset = [c for c in self.chunks if c['site'] in selected]
@@ -59,7 +69,25 @@ class MatchService:
             raise KeyError('Record not found in the selected authorized site')
         return {**record, 'related_capas': self.capas.get(record['pr_id'], [])}
 
-    def search(self, query: str, *, site: str | None = None, all_sites: bool = False, top_k: int = 10) -> dict:
+    def search(self, query: str = '', *, site: str | None = None, all_sites: bool = False, top_k: int = 10,
+               filters=None, mode='auto', offset=0) -> dict:
+        from .explorer import MatchExplorer
+        if self._explorer is None:
+            self._explorer = MatchExplorer(self)
+        return self._explorer.search(query, site=site, all_sites=all_sites, top_k=top_k,
+                                     filters=filters, mode=mode, offset=offset)
+
+    def search_legacy(self, query, *, site=None, all_sites=False, top_k=10):
+        return self._hybrid_search(query, site=site, all_sites=all_sites, top_k=top_k)
+
+    def facets(self, *, site=None, all_sites=False, filters=None):
+        from .explorer import MatchExplorer
+        if self._explorer is None:
+            self._explorer = MatchExplorer(self)
+        return self._explorer.facets(site=site, all_sites=all_sites, filters=filters)
+
+    def _hybrid_search(self, query: str, *, site: str | None = None, all_sites: bool = False, top_k: int = 10,
+                       record_ids=None, semantic_only=False, encoded_query=None) -> dict:
         if all_sites:
             if site is not None:
                 raise ValueError('Choose a site or all_sites=true, but not both.')
@@ -72,15 +100,15 @@ class MatchService:
         query = str(query or '').strip()
         if len(query) > 30000:
             raise ValueError('Query must be at most 30000 characters')
-        if len(query) < 8 or not tokenize(query):
-            raise ValueError('Enter a meaningful deviation description (at least 8 characters)')
+        if not tokenize(query):
+            raise ValueError('Enter a deviation ID, identifier, keywords or a description.')
         if not 1 <= top_k <= 50:
             raise ValueError('top_k must be from 1 to 50')
-        scoped_chunks, bm25 = self._scope_corpus(selected_sites)
+        scoped_chunks, bm25 = self._scope_corpus(selected_sites, record_ids)
         if not scoped_chunks:
             return {'query': query, **scope, 'results': [], 'result_count': 0}
         query_parts = split_chunks(query, self.manifest['chunk_size'], self.manifest['chunk_overlap'])
-        query_vectors = unit_rows(self.embedder.encode(query_parts))
+        query_vectors = unit_rows(self.embedder.encode(query_parts) if encoded_query is None else encoded_query)
         if query_vectors.shape[1] != 768:
             raise ValueError('Incorrect query embedding dimension')
         query_tokens = tokenize(query)
@@ -93,6 +121,8 @@ class MatchService:
         # BM25 is normalized over that combined corpus for a comparable ranking.
         site_filter = ({'site': selected_sites[0]} if len(selected_sites) == 1
                        else {'site': {'$in': list(selected_sites)}})
+        if record_ids is not None:
+            site_filter = {'$and': [site_filter, {'pr_id': {'$in': sorted(record_ids)}}]}
         semantic_results = self.collection.query(
             query_embeddings=query_vectors.tolist(),
             n_results=min(self.candidate_k, len(scoped_chunks)),
@@ -107,7 +137,7 @@ class MatchService:
 
         # Independent BM25 candidates, NOT only semantic candidates (key v1 improvement).
         # Only positive BM25 candidates enter, so irrelevant zero-overlap chunks don't crowd out semantic candidates.
-        if max_bm25 > 0:
+        if max_bm25 > 0 and not semantic_only:
             ranked = np.argsort(-raw_bm25, kind='stable')[:self.candidate_k]
             for i in ranked:
                 if raw_bm25[i] > 0:
@@ -135,7 +165,7 @@ class MatchService:
             semantic = max(0., min(1., float(np.max(query_vectors @ stored))))
             bm25_unit = float(raw_bm25[doc_idx] / max_bm25) if max_bm25 > 0 else 0.
             token_unit = max(jaccard(tokenize(part), tokenize(chunk['doc'])) for part in query_parts)
-            score = weighted_score(semantic, bm25_unit, token_unit)
+            score = semantic if semantic_only else weighted_score(semantic, bm25_unit, token_unit)
             record = self.records[chunk['pr_id']]
             if record['site'] not in allowed_scope or record['site'] != chunk['site']:
                 raise RuntimeError('Candidate outside the selected sites detected; refusing results')
@@ -173,7 +203,7 @@ class MatchService:
             'query': query, **scope,
             'model_name': self.manifest['model_name'],
             'mock_embeddings': self.manifest['embedding_backend'] != 'MPNet',
-            'ranking': {'semantic': 0.70, 'bm25': 0.20, 'jaccard': 0.10},
+            'ranking': {'semantic': 1.0, 'bm25': 0.0, 'jaccard': 0.0} if semantic_only else {'semantic': 0.70, 'bm25': 0.20, 'jaccard': 0.10},
             'candidate_chunks': len(ordered_ids),
             'semantic_candidate_chunks': semantic_candidate_count,
             'keyword_only_candidate_chunks': keyword_candidate_count,

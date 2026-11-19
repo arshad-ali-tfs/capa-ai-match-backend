@@ -22,12 +22,15 @@ class MemoryCollection:
                 'embeddings': [self.items[key]['vec'].tolist() for key in ids if key in self.items]}
 
     def query(self, *, query_embeddings, n_results, where, include=None):
+        def matches(metadata, clause):
+            if '$and' in clause:
+                return all(matches(metadata, value) for value in clause['$and'])
+            return all(metadata.get(field) in value['$in'] if isinstance(value, dict)
+                       else metadata.get(field) == value for field, value in clause.items())
         out_ids, out_distances, out_docs, out_meta = [], [], [], []
         for q in unit_rows(query_embeddings):
             eligible = [(k, val) for k, val in self.items.items()
-                        if all(val['metadata'].get(field) in value['$in'] if isinstance(value, dict)
-                               else val['metadata'].get(field) == value
-                               for field, value in where.items())]
+                        if matches(val['metadata'], where)]
             ranked = sorted(eligible, key=lambda pair: -float(q @ pair[1]['vec']))[:n_results]
             out_ids.append([key for key, _ in ranked])
             out_distances.append([max(0., 1 - float(q @ val['vec'])) for _, val in ranked])

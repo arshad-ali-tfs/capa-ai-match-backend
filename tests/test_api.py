@@ -46,7 +46,7 @@ def test_site_rejection_and_cross_site_record(client):
 
 
 @pytest.mark.parametrize('payload', [
-    {'query': 'HPLC', 'site': 'TRO (Toronto)'},
+    {'query': 'HPLC', 'site': 'TRO (Toronto)', 'mode': 'made-up'},
     {'query': 'HPLC bracket failed', 'site': 'TRO (Toronto)', 'top_k': 51},
     {'query': 'x' * 30001, 'site': 'TRO (Toronto)'},
 ])

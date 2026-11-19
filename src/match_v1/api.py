@@ -11,7 +11,7 @@ from .contracts import SearchRequest
 
 from .core import MockEmbedder, make_mpnet_embedder
 from .index import load_index_metadata, open_chroma
-from .search import MatchService
+from .search import MatchService, SiteAccessError
 
 app = FastAPI(title='CAPA.AI MATCH Local v1', version='1.0.0', docs_url='/docs')
 
@@ -76,8 +76,11 @@ def sites(service: MatchService = Depends(service_dependency)):
 @app.post('/api/search')
 def search(request: SearchRequest, service: MatchService = Depends(service_dependency)):
     try:
-        return service.search(request.query, site=request.site, all_sites=request.all_sites, top_k=request.top_k)
-    except PermissionError as exc:
+        if not request.use_explorer:
+            return service.search_legacy(request.query, site=request.site, all_sites=request.all_sites, top_k=request.top_k)
+        return service.search(request.query, site=request.site, all_sites=request.all_sites, top_k=request.top_k,
+                              filters=request.filters.model_dump(mode='json'), mode=request.mode, offset=request.offset)
+    except SiteAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -85,11 +88,22 @@ def search(request: SearchRequest, service: MatchService = Depends(service_depen
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@app.post('/api/facets')
+def filter_options(request: SearchRequest, service: MatchService = Depends(service_dependency)):
+    try:
+        return service.facets(site=request.site, all_sites=request.all_sites,
+                              filters=request.filters.model_dump(mode='json'))
+    except SiteAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get('/api/records/{pr_id}')
 def record(pr_id: str, site: str, service: MatchService = Depends(service_dependency)):
     try:
         return service.record(pr_id, site)
-    except PermissionError as exc:
+    except SiteAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

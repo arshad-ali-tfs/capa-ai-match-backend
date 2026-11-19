@@ -12,7 +12,7 @@ A deviation is a recorded departure from an expected process. CAPA means correct
 | Local API | http://127.0.0.1:8102 |
 | Interactive API docs | http://127.0.0.1:8102/docs |
 | Docker image | `capa-ai-match:local` |
-| Current integration | AUTHOR can call this API; common frontend MATCH screens are pending |
+| Current integration | Common frontend MATCH workspace; AUTHOR retains its existing search contract |
 
 [Architecture](#how-match-works) / [Setup](#run-locally) / [Search](#try-a-search) / [Storage](#data-and-index-lifecycle) / [Troubleshooting](#troubleshooting) / [Deployment](#deployment)
 
@@ -23,11 +23,23 @@ A deviation is a recorded departure from an expected process. CAPA means correct
 | [MAP backend](https://github.com/rahul-jha-tfs/capa-ai-map-backend) | Group historical deviations into patterns | 8101 |
 | **This repository: MATCH** | Retrieve similar historical records | 8102 |
 | [AUTHOR backend](https://github.com/rahul-jha-tfs/capa-ai-author-backend) | Investigation drafting; optional MATCH search over HTTP | 8103 |
-| [Common frontend](https://github.com/rahul-jha-tfs/capa-ai-frontend) | Browser interface; currently connected to MAP only | 8100 |
+| [Common frontend](https://github.com/rahul-jha-tfs/capa-ai-frontend) | Browser interface for MAP and MATCH | 8100 |
 
 Services use copies of the same versioned CSV/XLSX export, imported into independent snapshots. They do not require sibling source folders, a shared Python package or a live TrackWise connection. Compare snapshot IDs when connecting services; importing new data into one service does not update the others automatically.
 
 ## How MATCH works
+
+### Search experiment
+
+Branch `codex/match-search-experiments-20261119` adds structured exploration to the existing index. Use it with the same branch of the frontend at `/match`.
+
+- Filter by site, opened year(s), source criticality, DR type, responsible department, inclusive opened-date range and retained CAPA links. Multiple values within one field mean OR; different fields mean AND. Blank search browses the filtered records, newest opened first.
+- Smart mode recognizes exact deviation IDs, short equipment/document references and short keywords. Identifier searches preserve every digit and leading zero while tolerating separators, for example `MFG859` / `MFG-859`. Unknown identifiers return no matches instead of unrelated similar records. Use Keywords to search a numeric equipment or batch reference rather than an exact deviation ID.
+- Keywords require all words; quotation marks or Exact phrase require a literal phrase. These search full retained description, conclusion, recorded title and source investigation text where available. Investigation text is loaded read-only from the same source snapshot; it has not been added to semantic vectors.
+- Longer descriptions use meaning and keywords; Meaning mode compares broader wording without hard identifier constraints. Filters constrain retrieval before ranking. Experimental relevance uses 70% narrative rank and 30% recorded event-title meaning among up to 50 retrieved candidates. Narrative hybrid rank retains its original 70/20/10 formula. Scores prioritize review; they are not correctness or recurrence probabilities. Literal and browse results have no similarity score.
+- Filter counts describe the indexed population, not the entire source export. This installation has 4,292 eligible historical DPD deviations marked Closed - Done, not all 19,643 accepted source rows. CAPA completion means a retained linked CAPA marked Closed - Done; it does not establish effectiveness.
+
+`POST /api/v1/match/facets` supplies authorized filter choices and counts. Send an explicit `mode` (including `auto`) to opt into the explorer API. Existing narrative clients that omit `mode`, `filters` and `offset` retain the original hybrid ranking. `/index` reports local model warm-up separately; browsing and literal searches do not need model inference. Cached MPNet artifacts are loaded offline first. No new dependency, source import, paid API call or index rebuild is required for this experiment. See [API details](docs/API.md).
 
 An **index** is a prepared, searchable representation of historical records. Build it when provisioning or changing source data; ordinary searches reuse it.
 
@@ -55,7 +67,7 @@ flowchart LR
 | Runtime | ONNX FP32 by default | Run the model locally on CPU |
 | Text preparation | Description and Conclusion separately; 500-character windows, 50-character overlap | Search long narratives while preserving field identity |
 | Vector storage | Chroma with a versioned manifest | Reuse an index tied to its source |
-| Ranking | 70% semantic + 20% BM25 + 10% Jaccard | Combine meaning with keyword relevance and word overlap |
+| Legacy narrative ranking | 70% semantic + 20% BM25 + 10% Jaccard | Explorer also compares recorded event titles as described above |
 | Site scope | One allowed site or all configured allowed sites | Keep retrieval within the chosen boundary |
 
 Scores are ranking signals, not percentages of correctness. CAPA links come from source relationships. The local site allowlist is server configuration; enterprise user-based access control requires deployment configuration.
@@ -128,6 +140,7 @@ Search all configured allowed sites:
 ```powershell
 $body = @{
   query = "HPLC bracket standard failed system suitability"
+  mode = "auto"
   all_sites = $true
   top_k = 10
 } | ConvertTo-Json
@@ -139,7 +152,7 @@ Invoke-RestMethod -Method Post `
 
 For one site, replace `all_sites` with `site = "<exact site from /sites>"`. `top_k` accepts 1-50. Results retain exact source IDs, matched field/text, component scores and linked CAPA metadata.
 
-**Complete API inventory: 8 method-and-path operations, checked against this service's generated OpenAPI schema.** Each row links to its request parameters, response, saved changes and errors in the [detailed API reference](docs/API.md). GET and POST on the same URL count separately.
+**Complete API inventory: 9 method-and-path operations.** Each row links to its request parameters, response, saved changes and errors in the [detailed API reference](docs/API.md). GET and POST on the same URL count separately.
 
 ### Service and source APIs
 
@@ -157,6 +170,7 @@ For one site, replace `all_sites` with `site = "<exact site from /sites>"`. `top
 | [`GET /api/v1/match/index`](docs/API.md#get-api-v1-match-index) | Check the loaded index, embedding configuration and searchable coverage. |
 | [`GET /api/v1/match/sites`](docs/API.md#get-api-v1-match-sites) | List the configured sites that can be searched. |
 | [`POST /api/v1/match/search`](docs/API.md#post-api-v1-match-search) | Find historical deviations similar to the query within the chosen site scope. |
+| [`POST /api/v1/match/facets`](docs/API.md#post-api-v1-match-facets) | Authorized filter choices, counts and eligible population. |
 | [`GET /api/v1/match/matched-records/{pr_id}`](docs/API.md#get-api-v1-match-matched-records-pr-id) | Inspect a complete indexed record within an allowed site. |
 
 Use `/docs` for interactive requests and `/openapi.json` for the schema. MATCH deliberately has no unscoped source-record browsing route.
