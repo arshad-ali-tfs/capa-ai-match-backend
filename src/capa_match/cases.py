@@ -61,7 +61,8 @@ def save(service,assistant,request):
         included=[item for item in decisions if item['disposition']=='include']
         if len(included)>6:
             raise ValueError('An evidence bundle can retain up to six included source records.')
-        sources=[service.record(item['pr_id'],rows[item['pr_id']]['site']) for item in decisions]
+        from .retained import enriched
+        sources=[enriched(service,service.record(item['pr_id'],rows[item['pr_id']]['site'])) for item in decisions]
         summary=deepcopy(entry.get('summary'))
         if summary:
             summary['search_id']=request.search_id
