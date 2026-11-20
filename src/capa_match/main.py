@@ -13,9 +13,15 @@ from match_v1.contracts import SearchRequest
 from match_v1.search import SiteAccessError
 from capa_match.infrastructure.web import create_service
 from capa_match.infrastructure.storage import local_directory
+from capa_match.intelligence import SearchIntelligence, OverviewRequest, AssistanceUnavailable
 
 app = create_service('match')
 _warmup_lock = Lock()
+
+
+@lru_cache(maxsize=1)
+def assistant():
+    return SearchIntelligence()
 
 
 def query_model_state(service):
@@ -89,6 +95,7 @@ def index_metadata():
         'ranking': {'semantic': 0.70, 'bm25': 0.20, 'jaccard': 0.10},
         'disclaimer': 'Scores are relative ranking signals, not probabilities of recurrence.',
         'warning': 'Site access uses the server allowed-site configuration. Local mode does not provide enterprise authentication.' if os.getenv('CAPA_ENV', 'local') == 'local' else None,
+        'ai_assistance_configured': assistant().llm.configured,
     }
 
 
@@ -99,7 +106,9 @@ def sites():
 @app.post('/api/v1/match/search')
 def search(request: SearchRequest):
     try:
-        if not request.use_explorer:
+        if request.assist:
+            result = assistant().search(engine(), request)
+        elif not request.use_explorer:
             result = engine().search_legacy(request.query, site=request.site, all_sites=request.all_sites, top_k=request.top_k)
         else:
             result = engine().search(request.query, site=request.site, all_sites=request.all_sites, top_k=request.top_k,
@@ -113,6 +122,18 @@ def search(request: SearchRequest):
         raise HTTPException(400, detail=str(error)) from error
     except (OSError, RuntimeError) as error:
         raise HTTPException(503, detail='MATCH search is unavailable. Check the index and model configuration.') from error
+
+
+@app.post('/api/v1/match/overview')
+def evidence_overview(request: OverviewRequest):
+    try:
+        return assistant().overview(engine(), request.search_id)
+    except KeyError as error:
+        raise HTTPException(404, detail='This search overview expired. Search again to prepare it.') from error
+    except SiteAccessError as error:
+        raise HTTPException(403, detail='Site is not authorised.') from error
+    except (AssistanceUnavailable, OSError, RuntimeError, ValueError) as error:
+        raise HTTPException(503, detail='The AI evidence overview is unavailable. You can still review the source results.') from error
 
 
 @app.post('/api/v1/match/facets')

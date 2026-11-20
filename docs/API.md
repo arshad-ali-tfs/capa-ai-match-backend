@@ -4,7 +4,7 @@
 
 Base URL locally: `http://127.0.0.1:8102`.
 
-This reference covers **all 9 HTTP operations** for the current service entrypoint, including the experimental filtered explorer. Each method/path pair counts once. This is a contract reference, not a measured retrieval-accuracy claim.
+This reference covers **all 10 HTTP operations** for the current service entrypoint, including the experimental filtered explorer and cited AI overview. Each method/path pair counts once. This is a contract reference, not a measured retrieval-accuracy claim.
 
 Use `/docs` for Swagger **Try it out**, `/redoc` for the alternate schema viewer and `/openapi.json` for the machine-readable contract. FastAPI also serves `/docs/oauth2-redirect` for Swagger authorization callbacks. These framework URLs are not business operations in the totals. Many handlers return dictionaries without a typed OpenAPI response; the response descriptions below explain those bodies. Download handlers return files even where the current schema shows a generic JSON response.
 
@@ -34,6 +34,7 @@ Use `/docs` for Swagger **Try it out**, `/redoc` for the alternate schema viewer
 | [`GET /api/v1/match/sites`](#get-api-v1-match-sites) | List the configured sites that can be searched. |
 | [`POST /api/v1/match/search`](#post-api-v1-match-search) | Find historical deviations similar to the query within the chosen site scope. |
 | [`POST /api/v1/match/facets`](#post-api-v1-match-facets) | Authorized filter values, counts and eligible population. |
+| [`POST /api/v1/match/overview`](#post-api-v1-match-overview) | Cited AI overview of a server-retained result set. |
 | [`GET /api/v1/match/matched-records/{pr_id}`](#get-api-v1-match-matched-records-pr-id) | Inspect a complete indexed record within an allowed site. |
 
 ## Endpoint details
@@ -76,7 +77,7 @@ Discover the service's declared feature flags.
 
 **Returns (200):** Source browsing, business workflow, model-call and TrackWise connection flags.
 
-**Behavior and saved changes:** Static feature declaration, not an index or connectivity check. MATCH makes no OpenAI calls.
+**Behavior and saved changes:** Feature declaration, not an index or connectivity check. `optional_ai_assistance` is true; `model_calls` reports configured optional external AI assistance. Core embedding/retrieval is local.
 
 **Errors:** No route-specific error mapping.
 
@@ -132,7 +133,7 @@ Find historical deviations similar to the query within the chosen site scope.
 
 **Returns (200):** Ranked results with source IDs, matched field/text, score components, scope metadata and linked CAPA data.
 
-**Behavior and saved changes:** Specify either site or all_sites=true, never both/neither. Browse and literal searches need no model call. Ranked searches embed locally and reuse the existing index. No OpenAI call or index rebuild.
+**Behavior and saved changes:** Specify either site or all_sites=true, never both/neither. Core browse/literal searches need no model call. Ranked searches embed locally and reuse the existing index. `assist:true` can add external query interpretation/relevance review and a server-issued overview ID. It never rebuilds the index or writes source data.
 
 **Errors:** 422 for schema/scope validation; 403 for a disallowed site; 400 for invalid search values; 503 for unavailable search assets.
 
@@ -143,6 +144,18 @@ Find historical deviations similar to the query within the chosen site scope.
 Accepts the same scope and `filters` object as search; query/mode/paging fields are not used. Returns `source_snapshot_id`, normalized `filters`, `scope_record_count`, `eligible_record_count`, `missing_opened_dates` and `facets` for years, criticalities, dr_types and departments. Each facet item is `{value, count}`. Counts honor every other field but exclude that facet's own selection so multiple choices remain discoverable. They do not include the query text. Dates and CAPA constraints still apply. Site allowlists constrain all choices and counts. No model inference or saved mutation.
 
 Errors: 422 for invalid filters/scope, 403 for a disallowed site, 503 for unavailable source/index assets.
+
+<a id="post-api-v1-match-overview"></a>
+
+### `POST /api/v1/match/overview`
+
+Body: `{"search_id":"<32-lowercase-hex summary_id returned by assisted search>"}`. Extra fields are rejected. The server loads only the source rows retained for that search, within the current snapshot/authorized site set; callers cannot submit records or choose additional evidence.
+
+Returns `search_id`, `source_snapshot_id`, `lines` (3–4 `{text, references}` objects), `reviewed_ids` (at most six), `returned_count`, `cached` and provider token usage. References are reviewed **deviation** IDs, not CAPA IDs. Successful results are reused for identical evidence, including repeated searches. Requests are sent to the configured Responses endpoint with `store:false` and bounded excerpts. No automatic provider retry loop is used; the UI offers a manual retry while source results remain available.
+
+The current renderer receives two LLM synthesis sentences plus a server-calculated CAPA line. That line counts unique retained CAPA IDs, source Closed - Done statuses and reviewed deviations without retained links; narrative CAPA mentions cannot alter it. It may reference all six reviewed deviations. A longer AI draft gets at most one bounded evidence/length revision, reported as `usage.revision_pass`, without cutting a sentence mid-word. `MATCH_REVIEW_MODEL` defaults to `gpt-4.1`; query interpretation uses `MATCH_ASSIST_MODEL` (default `gpt-4.1-mini`).
+
+Errors: 422 invalid request, 404 expired/unknown search or changed source/site authority, 403 denied source site, 503 AI/provider/validation failure. Search handles expire after 15 minutes; both handle and overview caches are bounded to 64 entries. Nothing is persisted to the source or index.
 
 <a id="get-api-v1-match-matched-records-pr-id"></a>
 
@@ -180,12 +193,19 @@ Required/default columns describe omission, not automatic approval or workflow r
 | `mode` | string | `auto` | `auto`, `keyword`, `exact`, `semantic` |
 | `filters` | object | empty filters | See below; unknown properties rejected |
 | `offset` | integer | `0` | 0–1,000,000; browse/literal pagination only |
+| `assist` | boolean | `false` | Opt into optional query assistance, relevance review and overview handles; existing clients are unchanged |
 
 Filter fields: `years` (integer array, 1900–2200, at most 100), `criticalities` (string array, at most 20), `dr_types` (string array, at most 50), `departments` (string array, at most 100), `date_from` / `date_to` (ISO dates or null, inclusive, from ≤ to), `capa` (`any`, `linked`, `completed`, `none`). Strings must be nonempty after trimming and at most 200 characters. Multiple choices in one field mean OR; different fields mean AND. Missing opened dates are excluded when a year or date constraint is active. Completed requires a retained linked CAPA marked Closed - Done; none means no retained link, not proof that no CAPA exists.
 
 Explorer responses add `requested_mode`, resolved `search_mode`, normalized `filters`, `scope_record_count`, `eligible_record_count`, `required_identifiers`, `offset`, `limit`, `has_more` and `total_matches`. Browse/literal searches return a complete count and null scores. Ranked searches return `total_matches: null` (not an exhaustive match count), no pagination, up to `top_k` candidates, `relevance_score`, `event_title_score` and `ranking_explanation`. Rows include `match_kind`, factual `match_reasons` and zero-based Unicode-codepoint `matched_spans` into `matched_excerpt`. Clients using UTF-16 must convert offsets before highlighting.
 
 Always send `mode` explicitly to opt into the experiment. For compatibility, a narrative of at least eight characters that omits all three of `mode`, `filters` and `offset` follows the original hybrid contract used by AUTHOR. Explicitly requesting `auto` selects the new explorer even when other values are defaults.
+
+With `assist:true`, `submitted_criteria` echoes the original validated request; `query` remains the original user input. Actual `site`/`filters` may include explicit natural-language constraints, and `interpretation` reports `{query, origin}` (`llm` or local fallback). An empty interpreted query means filter-only browsing even when the original input is nonempty. Selected manual filters always take precedence. IDs remain hard constraints even in long descriptions; explicit Meaning mode permits broader comparisons.
+
+Assisted natural-language candidates combine original/clarified retrieval positions (RRF constant 60). Optional LLM relevance review considers up to 20 candidates, returns only supplied IDs, and can remove incidental matches. Displayed review quotes must occur in that record's supplied title/description/matched excerpt. `candidate_relationship` is `direct` or `related`, an AI assessment rather than a validated label. `rank_fusion:true` tells the frontend to show order and evidence instead of a misleading numeric confidence. Empty ranked results remain non-exhaustive (`total_matches:null`).
+
+`summary_id` is a short-lived opaque overview handle, or null for empty results. `assistant_usage` and optional `relevance_review_usage` report provider tokens; cache reuse can omit a new usage record. A provider failure retains local retrieval, explicit constraints and source access. Plain exact identifiers, quoted phrases and manual search modes bypass query rewriting. If `assist` is false, no new AI call or overview handle is created.
 
 ## Search scope and inputs
 
@@ -232,7 +252,9 @@ The API reuses a prepared index. Importing source files and building/rebuilding 
 
 ## Compatibility and inventory scope
 
-The current entrypoint is `capa_match.main:app`. Older routes defined inside the retained `match_v1.api` module, such as `/api/search`, are not mounted on this application and are not supported aliases here. Use the nine operations above when integrating this service.
+The current entrypoint is `capa_match.main:app`. Older routes defined inside the retained `match_v1.api` module, such as `/api/search`, are not mounted on this application and are not supported aliases here. Use the ten operations above when integrating this service. AI assistance/overviews belong to this source-backed entrypoint, not the retained standalone compatibility API.
+
+Implementation references: [OpenAI structured Responses](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses) and [reciprocal rank fusion](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion).
 
 ## Implementation references
 

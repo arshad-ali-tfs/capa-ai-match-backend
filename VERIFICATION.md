@@ -1,5 +1,17 @@
 # Local verification - 13 November 2026
 
+## Search first, query assistance and source-cited overview - 20 November 2026
+
+The experiment now has opt-in `assist:true`, explicit natural-language constraints, original/clarified query fusion, relevance review and a separate overview endpoint. GPT-4.1-mini interprets queries; GPT-4.1 reviews evidence. The first two overview lines synthesize source patterns/findings; the third is computed from retained CAPA IDs/statuses, not narrative mentions. Long drafts get at most one evidence/length revision. Server-issued search handles, bounded caches, strict output schemas/citation membership, source quotes/title fallback and snapshot/site-authority checks constrain the workflow. Existing narrative clients (including AUTHOR) retain their earlier ranking and make no new provider calls.
+
+The full offline suite passes **204 tests**, with **seven existing opt-in integration skips**; all **42 focused intelligence checks** also pass after the final display changes. Coverage includes explicit/manual constraint precedence, filter-only browsing, year ranges/relative years, unknown IDs, long narrative equipment anchors, source scope before provider calls, multiple-query fusion, removal of incidental candidates, invented ID/quote handling, source-only CAPA status arithmetic, provider/model selection, expiry, concurrent/repeated overview reuse and safe failure. Offline tests disable external AI and use fictional fixtures/test doubles.
+
+Real source/provider checks exercise MFG859's two exact records, Critical opened in 2025 OR 2026 (10 complete records), Toronto/Major/2025 (26 eligible records before relevance retrieval), misspelled temperature/sensor-calibration language and wrong-raw-material addition. Relevance review isolates the HPLC standard-preparation case and prioritizes actual wrong-excipient/gelatin/material-assignment events over incidental wording. Reports include actual source IDs, applied constraints, model usage and reviewed excerpts in ignored `.local/match-assist-final-live.json`; these are selected execution/relevance checks, not a validated sensitivity/precision study.
+
+The frontend passes 44 unit tests, 99 MATCH browser checks plus 24 final assisted-flow checks, TypeScript and production build. Live browser checks at 1440, 820, 390 and 320 px verify search-first controls, hidden/discoverable filters, generated source citations, record navigation, no overflow/page errors and a MAP smoke check. Successful overview replay is cached; core results remain usable during overview loading/failure.
+
+Source/model/index preparation remains unchanged. Compare the pre-experiment manifest/record/chunk/CAPA SHA-256 baseline in ignored `.local/experiment-baseline.json`; final API checks assert those digests. No new source import or embedding build is part of this update. Keys, model caches, source/runtime files and diagnostic reports remain ignored. Query/limited source-excerpt transfer to the configured OpenAI endpoint was explicitly approved for this local test; requests set `store:false` and application logs exclude prompts, credentials and upstream bodies.
+
 ## MATCH search experiment - 20 November 2026
 
 The experiment branch `codex/match-search-experiments-20261119` adds structured filters, filter-only browsing, literal identifiers/keywords/phrases, source investigation evidence and recorded event-title reranking. The original narrative HTTP contract used by AUTHOR remains on its original hybrid path. Source eligibility and saved vectors are unchanged.

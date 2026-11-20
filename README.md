@@ -2,7 +2,7 @@
 
 **Find historical deviations that resemble a new problem, with the source records available for inspection.**
 
-MATCH is an independent FastAPI search service. It combines similarity in meaning with keyword overlap, respects the configured site scope, and returns ranked records with their original IDs and linked CAPAs. The embedding model runs locally; this service makes no OpenAI API calls.
+MATCH is an independent FastAPI search service. It combines similarity in meaning with keyword overlap, respects the configured site scope, and returns ranked records with their original IDs and linked CAPAs. Embeddings run locally. Optional AI assistance uses the configured OpenAI-compatible Responses endpoint for query interpretation, candidate relevance review and cited evidence overviews.
 
 A deviation is a recorded departure from an expected process. CAPA means corrective and preventive action.
 
@@ -31,6 +31,16 @@ Services use copies of the same versioned CSV/XLSX export, imported into indepen
 
 ### Search experiment
 
+The search-first update keeps filters collapsed behind a labelled **Filters** button, with selected criteria visible outside the panel. Smart searches use both original and clarified wording. Explicit opened years/ranges, criticality and unique site names become visible hard constraints; selected controls take precedence. A true filter-only request such as “show all Critical deviations in 2025 and 2026” browses those records with complete counts rather than ranking the word “deviations.”
+
+For natural language, original/clarified results are combined using reciprocal rank fusion (constant 60), then up to 20 candidates can be reviewed by the LLM for event relevance. Any displayed relevance quote must occur in that candidate's supplied source text. Plain IDs, quoted phrases, blank browsing and explicit Keywords/Exact/Meaning modes retain their predictable retrieval paths. Existing AUTHOR requests remain on the original contract.
+
+The independent **Evidence overview** summarizes up to six returned records in three short cited lines. The LLM synthesizes patterns/findings; the CAPA line is calculated from actual retained links and statuses, so narrative mentions cannot become invented links or completion claims. Citations are restricted to reviewed deviation IDs; CAPA IDs cannot replace source references. Longer drafts receive at most one evidence/length revision, without truncating sentences. This is an excerpted sample, not a full-population analysis or a current-case conclusion. Results remain usable while the overview prepares or when AI is unavailable.
+
+To enable AI, set server-side `OPENAI_API_KEY`, `OPENAI_BASE_URL` (locally `https://api.openai.com/v1`), `MATCH_ASSIST_ENABLED=1`, `MATCH_ASSIST_MODEL` (query interpretation, default `gpt-4.1-mini`), `MATCH_REVIEW_MODEL` (relevance/overview, default `gpt-4.1`) and optionally `MATCH_ASSIST_TIMEOUT_SECONDS` (default 30) in ignored `.env`. Leave the key empty or set `MATCH_ASSIST_ENABLED=0` for local retrieval only. Use an endpoint authorized for the source data: natural-language queries, up to 20 limited candidate excerpts for relevance review, and up to six result excerpts/CAPA details for the overview are sent there with `store:false`. Credentials stay on the backend. Normal searches never send the complete export or rebuild embeddings.
+
+Planning, relevance and successful overview results have bounded in-memory caches. Opaque overview IDs expire after 15 minutes and are invalidated by source/site-authority changes. The overview endpoint accepts only the server-issued search ID, never client-supplied evidence. No source data or cases are written. Review the source before using AI interpretations; a labelled evaluation set is still needed to measure retrieval accuracy.
+
 Branch `codex/match-search-experiments-20261119` adds structured exploration to the existing index. Use it with the same branch of the frontend at `/match`.
 
 - Filter by site, opened year(s), source criticality, DR type, responsible department, inclusive opened-date range and retained CAPA links. Multiple values within one field mean OR; different fields mean AND. Blank search browses the filtered records, newest opened first.
@@ -39,7 +49,7 @@ Branch `codex/match-search-experiments-20261119` adds structured exploration to 
 - Longer descriptions use meaning and keywords; Meaning mode compares broader wording without hard identifier constraints. Filters constrain retrieval before ranking. Experimental relevance uses 70% narrative rank and 30% recorded event-title meaning among up to 50 retrieved candidates. Narrative hybrid rank retains its original 70/20/10 formula. Scores prioritize review; they are not correctness or recurrence probabilities. Literal and browse results have no similarity score.
 - Filter counts describe the indexed population, not the entire source export. This installation has 4,292 eligible historical DPD deviations marked Closed - Done, not all 19,643 accepted source rows. CAPA completion means a retained linked CAPA marked Closed - Done; it does not establish effectiveness.
 
-`POST /api/v1/match/facets` supplies authorized filter choices and counts. Send an explicit `mode` (including `auto`) to opt into the explorer API. Existing narrative clients that omit `mode`, `filters` and `offset` retain the original hybrid ranking. `/index` reports local model warm-up separately; browsing and literal searches do not need model inference. Cached MPNet artifacts are loaded offline first. No new dependency, source import, paid API call or index rebuild is required for this experiment. See [API details](docs/API.md).
+`POST /api/v1/match/facets` supplies authorized filter choices and counts. Send an explicit `mode` (including `auto`) to opt into the explorer API; add `assist:true` for query assistance and an overview ID. Existing narrative clients that omit `assist`, `mode`, `filters` and `offset` retain the original hybrid ranking. `/index` reports local model warm-up separately; browsing and literal retrieval do not need model inference. Cached MPNet artifacts load offline first. No new dependency, source import or index rebuild is required. Optional AI calls are billed by the configured provider. See [API details](docs/API.md).
 
 An **index** is a prepared, searchable representation of historical records. Build it when provisioning or changing source data; ordinary searches reuse it.
 
@@ -152,7 +162,7 @@ Invoke-RestMethod -Method Post `
 
 For one site, replace `all_sites` with `site = "<exact site from /sites>"`. `top_k` accepts 1-50. Results retain exact source IDs, matched field/text, component scores and linked CAPA metadata.
 
-**Complete API inventory: 9 method-and-path operations.** Each row links to its request parameters, response, saved changes and errors in the [detailed API reference](docs/API.md). GET and POST on the same URL count separately.
+**Complete API inventory: 10 method-and-path operations.** Each row links to its request parameters, response, saved changes and errors in the [detailed API reference](docs/API.md). GET and POST on the same URL count separately.
 
 ### Service and source APIs
 
@@ -171,6 +181,7 @@ For one site, replace `all_sites` with `site = "<exact site from /sites>"`. `top
 | [`GET /api/v1/match/sites`](docs/API.md#get-api-v1-match-sites) | List the configured sites that can be searched. |
 | [`POST /api/v1/match/search`](docs/API.md#post-api-v1-match-search) | Find historical deviations similar to the query within the chosen site scope. |
 | [`POST /api/v1/match/facets`](docs/API.md#post-api-v1-match-facets) | Authorized filter choices, counts and eligible population. |
+| [`POST /api/v1/match/overview`](docs/API.md#post-api-v1-match-overview) | Prepare/reuse a short cited overview of server-retained search evidence. |
 | [`GET /api/v1/match/matched-records/{pr_id}`](docs/API.md#get-api-v1-match-matched-records-pr-id) | Inspect a complete indexed record within an allowed site. |
 
 Use `/docs` for interactive requests and `/openapi.json` for the schema. MATCH deliberately has no unscoped source-record browsing route.

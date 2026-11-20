@@ -35,11 +35,12 @@ class SearchRequest(BaseModel):
     filters: SearchFilters = Field(default_factory=SearchFilters)
     mode: Literal['auto', 'keyword', 'exact', 'semantic'] = 'auto'
     offset: int = Field(default=0, ge=0, le=1000000)
+    assist: bool = False
 
     @property
     def use_explorer(self):
         # Existing narrative clients (including AUTHOR) retain hybrid scores.
-        return bool({'mode', 'filters', 'offset'} & self.model_fields_set) or len(self.query.strip()) < 8
+        return self.assist or bool({'mode', 'filters', 'offset'} & self.model_fields_set) or len(self.query.strip()) < 8
 
     @model_validator(mode='after')
     def require_one_scope(self):

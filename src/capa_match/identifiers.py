@@ -86,9 +86,11 @@ class SnapshotMatchService:
     def __getattr__(self, name):
         return getattr(self.service, name)
 
-    def search(self, query='', *, site=None, all_sites=False, top_k=10, filters=None, mode='auto', offset=0):
+    def search(self, query='', *, site=None, all_sites=False, top_k=10, filters=None, mode='auto', offset=0,
+               required_identifiers=None, force_ranked=False):
         result = self.service.search(query, site=site, all_sites=all_sites, top_k=top_k,
-                                     filters=filters, mode=mode, offset=offset)
+                                     filters=filters, mode=mode, offset=offset,
+                                     required_identifiers=required_identifiers, force_ranked=force_ranked)
         return {**result, 'source_snapshot_id': self.identifiers.snapshot_id,
                 'results': [self.identifiers.external_record(record) for record in result['results']]}
 

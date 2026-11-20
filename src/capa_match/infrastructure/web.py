@@ -58,7 +58,8 @@ def create_service(name: str, repository: RecordRepository | None = None) -> Fas
     @app.get(prefix + '/capabilities')
     def capabilities():
         return {'source_browsing': name != 'match', 'business_workflow': 'available',
-                'trackwise_connection': False, 'model_calls': name in {'map', 'author'}}
+                'trackwise_connection': False, 'model_calls': bool(os.getenv('OPENAI_API_KEY')) and os.getenv('MATCH_ASSIST_ENABLED', '1') == '1',
+                'optional_ai_assistance': True}
 
     @app.get(prefix + '/source')
     def source_metadata():

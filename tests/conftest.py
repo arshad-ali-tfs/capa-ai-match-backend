@@ -8,3 +8,4 @@ os.environ['CAPA_SOURCE_SNAPSHOT'] = ''
 os.environ['CAPA_SOURCE_CSV'] = ''
 os.environ['CAPA_DATA_DIR'] = _test_root.name
 os.environ['CAPA_ENV'] = 'local'
+os.environ['MATCH_ASSIST_ENABLED'] = '0'

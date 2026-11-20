@@ -70,12 +70,13 @@ class MatchService:
         return {**record, 'related_capas': self.capas.get(record['pr_id'], [])}
 
     def search(self, query: str = '', *, site: str | None = None, all_sites: bool = False, top_k: int = 10,
-               filters=None, mode='auto', offset=0) -> dict:
+               filters=None, mode='auto', offset=0, required_identifiers=None, force_ranked=False) -> dict:
         from .explorer import MatchExplorer
         if self._explorer is None:
             self._explorer = MatchExplorer(self)
         return self._explorer.search(query, site=site, all_sites=all_sites, top_k=top_k,
-                                     filters=filters, mode=mode, offset=offset)
+                                     filters=filters, mode=mode, offset=offset,
+                                     required_identifiers=required_identifiers, force_ranked=force_ranked)
 
     def search_legacy(self, query, *, site=None, all_sites=False, top_k=10):
         return self._hybrid_search(query, site=site, all_sites=all_sites, top_k=top_k)

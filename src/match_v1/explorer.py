@@ -207,7 +207,8 @@ class MatchExplorer:
                 row['match_reasons'].append('The recorded event title was also compared with the query')
         return sorted(rows, key=lambda row: (-row['relevance_score'], -row['match_score'], row['pr_id']))
 
-    def search(self, query='', *, site=None, all_sites=False, top_k=10, filters=None, mode='auto', offset=0):
+    def search(self, query='', *, site=None, all_sites=False, top_k=10, filters=None, mode='auto', offset=0,
+               required_identifiers=None, force_ranked=False):
         records, scope = self.scope(site, all_sites)
         filters = self.filters(filters)
         if mode not in {'auto', 'keyword', 'exact', 'semantic'}:
@@ -223,6 +224,8 @@ class MatchExplorer:
         id_value = query if query in source_ids else next(value for value in prefix.groups() if value is not None) if prefix else query
         id_lookup = mode in {'auto', 'exact'} and (query in source_ids or prefix is not None or query.isdigit())
         required_ids = identifiers(query) if mode in {'auto', 'keyword'} and len(query.split()) <= 12 and not id_lookup else []
+        if required_identifiers is not None:
+            required_ids = list(required_identifiers)
         if query and not id_lookup and (required_ids or mode in {'keyword', 'exact'} or mode == 'auto' and (len(query.split()) <= 2 or query.startswith('"'))):
             self.ensure_source_documents()
         patterns = [literal_pattern(value) for value in required_ids]
@@ -232,7 +235,7 @@ class MatchExplorer:
             raise ValueError('Enter a complete identifier or at least two letters/numbers, or leave search empty to browse.')
         quoted = len(query) > 1 and query.startswith('"') and query.endswith('"')
         only_ids = bool(required_ids) and re.sub(r'[^A-Za-z0-9]', '', query).casefold() == ''.join(re.sub(r'[^A-Za-z0-9]', '', value).casefold() for value in required_ids)
-        resolved = ('browse' if not query else 'record_id' if id_lookup else 'identifier' if only_ids
+        resolved = ('browse' if not query else 'record_id' if id_lookup else 'hybrid' if force_ranked else 'identifier' if only_ids
                     else 'exact' if mode == 'exact' or quoted else 'keyword' if mode == 'keyword' or mode == 'auto' and len(words) <= 2
                     else 'semantic' if mode == 'semantic' else 'hybrid')
         envelope = {'query': query, **scope, 'filters': filters, 'requested_mode': mode, 'search_mode': resolved,
@@ -257,6 +260,10 @@ class MatchExplorer:
                 row['match_reasons'] = reasons + (['Related meaning in indexed text'] if resolved == 'semantic' else ['Ranked by meaning, keyword relevance and word overlap'])
                 chunk = self.chunks_by_id.get(row.get('matched_chunk_id'))
                 row['matched_excerpt'], row['matched_spans'] = excerpt(chunk['doc'] if chunk else row['matched_excerpt'], [phrase_pattern(word) for word in words[:32]])
+                if required_ids:
+                    # Show the literal anchor even when ranking used another field.
+                    record = self.service.records[row['pr_id']]
+                    row['matched_field'], row['matched_excerpt'], row['matched_spans'] = self.best_text(record, patterns)
             result['results'] = self.rerank(result['results'], query_vectors)[:top_k] if result['results'] else []
             result['result_count'] = len(result['results'])
             explanation = f'Relevance combines {(1 - TITLE_WEIGHT) * 100:.0f}% narrative rank and {TITLE_WEIGHT * 100:.0f}% recorded event-title meaning. '
