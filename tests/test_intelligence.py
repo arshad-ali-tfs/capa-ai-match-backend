@@ -147,7 +147,7 @@ def test_overview_only_uses_returned_authorized_records_and_preserves_capa_plan(
     assert {row['id'] for row in evidence}=={'101'}
     assert 'UNTRUSTED' in llm.calls[-1][1]
     repeat=helper.overview(service,result['summary_id'])
-    assert repeat['cached'] and len(llm.calls)==1
+    assert repeat['cached'] and len(llm.calls)==2
 
 
 def test_unknown_citations_are_rejected_instead_of_shown_as_evidence():
@@ -157,12 +157,12 @@ def test_unknown_citations_are_rejected_instead_of_shown_as_evidence():
     with pytest.raises(AssistanceUnavailable):helper.overview(service,result['summary_id'])
 
 
-def test_concurrent_overview_requests_share_one_provider_call():
+def test_concurrent_overview_requests_share_one_verified_pipeline():
     llm=FakeLLM();helper=SearchIntelligence(llm);service=explorer()
     token=helper.search(service,request('101'))['summary_id']
     with ThreadPoolExecutor(max_workers=2) as pool:
         rows=list(pool.map(lambda _:helper.overview(service,token),range(2)))
-    assert len(llm.calls)==1 and sum(row['cached'] for row in rows)==1
+    assert len(llm.calls)==2 and sum(row['cached'] for row in rows)==1
 
 
 def test_changed_site_authority_or_snapshot_invalidates_cached_evidence():
@@ -179,7 +179,7 @@ def test_same_evidence_reuses_overview_across_repeated_searches():
     second=helper.search(service,request('101'))['summary_id']
     result=helper.overview(service,second)
     assert first!=second and result['search_id']==second and result['cached']
-    assert len(helper.llm.calls)==1
+    assert len(helper.llm.calls)==2
 
 
 def test_long_overview_gets_one_bounded_evidence_and_length_revision():

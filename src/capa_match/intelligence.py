@@ -26,7 +26,7 @@ from match_v1.contracts import SearchFilters
 from match_v1.explorer import identifiers
 
 LOG = logging.getLogger(__name__)
-VERSION = 'match-assist-v1'
+VERSION = 'match-assist-v1-direct-answer-v1'
 
 
 class AssistanceUnavailable(RuntimeError):
@@ -113,7 +113,7 @@ class StructuredLLM:
                 or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise AssistanceUnavailable('Invalid model endpoint configuration.')
         url = self.base if self.base.endswith('/responses') else self.base + '/responses'
-        model = self.review_model if name in {'match_relevance', 'match_overview'} else self.model
+        model = self.review_model if name in {'match_relevance', 'match_overview', 'match_grounding'} else self.model
         body = {'model': model, 'store': False, 'instructions': instructions,
                 'input': json.dumps(data, ensure_ascii=False), 'max_output_tokens': max_tokens,
                 'text': {'format': {'type': 'json_schema', 'name': name, 'strict': True, 'schema': schema}}}
@@ -427,62 +427,14 @@ class SearchIntelligence:
         return result
 
     def overview(self, service, search_id):
+        from .answering import build_summary
         entry = self.searches.get(search_id)
         if entry is None or entry['authority'] != self.authority(service):
-            raise KeyError('Search expired. Search again to prepare an overview.')
+            raise KeyError('Search expired. Search again to prepare an answer.')
         with entry['lock']:
             if entry['summary'] is not None:
-                return {**deepcopy(entry['summary']), 'search_id': search_id, 'cached': True}
-            result = entry['result']
-            records = []
-            source_rows = []
-            for row in result['results'][:6]:
-                source = service.record(row['pr_id'], row['site'])
-                source_rows.append(source)
-                fields = source.get('indexed_field_texts') or {'DETAILED_DESCRIPTION': source.get('text', '')}
-                records.append({'id': row['pr_id'], 'title': source.get('record_name', ''), 'site': row['site'],
-                                'criticality': source.get('criticality', ''), 'opened': source.get('date_opened', ''),
-                                'matched_field': row.get('matched_field'), 'matched_excerpt': row.get('matched_excerpt', ''),
-                                'description_excerpt': fields.get('DETAILED_DESCRIPTION', '')[:1000],
-                                'conclusion_excerpt': fields.get('CONCLUSION', '')[:2000],
-                                'linked_capas': [{key: str(value)[:750] for key, value in capa.items()
-                                                  if key in {'pr_id', 'record_name', 'title', 'status', 'description', 'text', 'capa_type', 'summary', 'plan_excerpt', 'date_closed'}}
-                                                 for capa in source.get('related_capas', [])[:3]]})
-            schema = deepcopy(OVERVIEW_SCHEMA)
-            schema['properties']['lines']['items']['properties']['references']['items']['enum'] = [row['id'] for row in records]
-            context = {
-                'query': result['query'], 'scope': {'site': result['site'], 'filters': result['filters']},
-                'reviewed_records': len(records), 'returned_records': len(result['results']),
-                'evidence_is_excerpted': True, 'records': records, 'verified_capa_status': verified_capa_line(source_rows)['text']}
-            generated, usage = self.llm.invoke('match_overview', OVERVIEW_PROMPT, context, schema, 700)
-            lines = generated.get('lines')
-            ids = {row['id'] for row in records}
-            # Longer drafts receive one bounded evidence/length check. Never
-            # truncate a sentence or silently cut off qualifications to fit UI.
-            if isinstance(lines, list) and all(isinstance(line, dict) and isinstance(line.get('text'), str) for line in lines) and sum(len(line['text'].split()) for line in lines) > 85:
-                generated, extra = self.llm.invoke('match_overview', OVERVIEW_PROMPT +
-                    '\nREQUIRED REVISION: Audit the draft against the supplied evidence, then rewrite it in exactly THREE short sentences and at most 65 words TOTAL. '
-                    'Remove incidental case details and unsupported generalizations about impact, compliance, causes or CAPA necessity. '
-                    'No retained CAPA link does not mean no CAPA was required. Keep source-reported uncertainty and the correct deviation citations.',
-                    {**context, 'draft_to_check': lines}, schema, 500)
-                usage = {'model': extra.get('model', usage.get('model')), 'input_tokens': usage.get('input_tokens', 0) + extra.get('input_tokens', 0),
-                         'output_tokens': usage.get('output_tokens', 0) + extra.get('output_tokens', 0), 'revision_pass': True}
-                lines = generated.get('lines')
-            if not isinstance(lines, list) or not 3 <= len(lines) <= 4:
-                raise AssistanceUnavailable('The evidence overview could not be verified.')
-            for line in lines:
-                if (not isinstance(line, dict) or set(line) != {'text', 'references'} or not isinstance(line['text'], str)
-                        or not 10 <= len(line['text']) <= 400 or line['text'].rstrip()[-1] not in '.!?'
-                        or not isinstance(line['references'], list) or not 1 <= len(line['references']) <= 3
-                        or any(not isinstance(ref, str) or ref not in ids for ref in line['references'])):
-                    raise AssistanceUnavailable('The evidence overview could not be verified.')
-                line['references'] = list(dict.fromkeys(line['references']))
-            # Do not turn narrative mentions of planned CAPAs into retained
-            # links or infer completion/necessity from a missing relationship.
-            lines = lines[:2] + [verified_capa_line(source_rows)]
-            summary = {'search_id': search_id, 'source_snapshot_id': result.get('source_snapshot_id', service.manifest.get('source_snapshot_id')),
-                       'lines': lines, 'reviewed_ids': [record['id'] for record in records],
-                       'returned_count': len(result['results']), 'usage': usage, 'cached': False}
+                return {**deepcopy(entry['summary']), 'search_id':search_id, 'cached':True}
+            summary = build_summary(service, entry['result'], self.llm, search_id)
             entry['summary'] = deepcopy(summary)
             return summary
 
