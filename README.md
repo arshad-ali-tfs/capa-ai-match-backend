@@ -250,3 +250,26 @@ Set `MATCH_RUN_INTEGRATION=1` to enable the optional heavier integration suite. 
 [DOCKER.md](DOCKER.md) covers the image, mounted data and checks. [DEPLOYMENT.md](DEPLOYMENT.md) covers Databricks Apps, code-only staging, published source/model/index assets, app permissions and authentication.
 
 Linux Docker retrieval is verified locally; Databricks deployment remains a separate acceptance step. Keep published generations immutable, give serving processes separate writable caches, and validate real retrieval in the target environment. Enterprise identity/site authorization belongs at the service boundary.
+
+
+### Direct question answers and deterministic watchlists
+
+Overview generation leads with the answer to a question, followed by supporting
+findings and retained CAPA status. An independent evidence check selects the direct
+answer and must supply exact original-field quotes for every cited deviation.
+Unverified answers become explicit question-specific evidence gaps. A bounded
+length revision retains qualifications; no retrieval filters or ranking change.
+The summary contract adds is_question, question_intent, answer_status and citations.
+
+`GET /api/v1/match/matched-records/{pr_id}/watchlist?site=...&as_of=YYYY-MM-DD`
+requires the exact source identifier and authorised indexed site. It scans only
+MATCH-eligible indexed records at that site. Counts exclude the selected deviation,
+deduplicate per record, preserve equipment-ID digits/zeroes, and do not use LLMs or
+embeddings. Source text is projected from the same snapshot. Equipment and location
+mentions are distinguished from conservative title/description event indicators.
+Negation and explicit historical/reference contexts are excluded from event signals.
+These counts do not establish recurrent root causes, causation or effectiveness.
+Other-record evidence is capped at five examples per signal; counts cover the full
+site corpus. Up to eight signals are displayed, with available-signal coverage.
+The recent window is the inclusive preceding 12 calendar months. Missing/future
+opened dates are excluded from dated breakdowns and reported separately.
