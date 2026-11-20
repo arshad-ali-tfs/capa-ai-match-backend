@@ -14,6 +14,8 @@ from match_v1.search import SiteAccessError
 from capa_match.infrastructure.web import create_service
 from capa_match.infrastructure.storage import local_directory
 from capa_match.intelligence import SearchIntelligence, OverviewRequest, AssistanceUnavailable
+from capa_match import cases
+from capa_match.provenance import index_generation
 
 app = create_service('match')
 _warmup_lock = Lock()
@@ -52,6 +54,9 @@ def engine():
     try:
         os.environ['MATCH_INDEX_DIR'] = str(local_directory(os.environ['MATCH_INDEX_DIR']))
         manifest = json.loads((Path(os.environ['MATCH_INDEX_DIR']) / 'manifest.json').read_text(encoding='utf8'))
+        from match_v1.core import TEXT_NORMALIZATION_VERSION
+        if manifest.get('source_statistics',{}).get('text_normalization_version')!=TEXT_NORMALIZATION_VERSION:
+            raise HTTPException(503,detail='The search index needs rebuilding to preserve scientific source text. Rebuild the MATCH index before searching.')
         from capa_match.infrastructure.data.repository import SqliteRecordRepository
         from capa_match.infrastructure.storage import local_file
         repository = SqliteRecordRepository(local_file(os.environ['CAPA_SOURCE_SNAPSHOT']))
@@ -96,6 +101,8 @@ def index_metadata():
         'disclaimer': 'Scores are relative ranking signals, not probabilities of recurrence.',
         'warning': 'Site access uses the server allowed-site configuration. Local mode does not provide enterprise authentication.' if os.getenv('CAPA_ENV', 'local') == 'local' else None,
         'ai_assistance_configured': assistant().llm.configured,
+        'text_normalization_version': manifest.get('source_statistics',{}).get('text_normalization_version'),
+        'index_generation': index_generation(manifest),
     }
 
 
@@ -156,3 +163,37 @@ def matched_record(pr_id: str, site: str):
         raise HTTPException(403, detail='Site is not authorised.') from error
     except (KeyError, ValueError) as error:
         raise HTTPException(404, detail='Record not found for the selected site.') from error
+
+
+@app.get('/api/v1/match/cases')
+def saved_cases():
+    try:
+        return {'items':cases.list_cases(engine())}
+    except (OSError, TimeoutError, ValueError) as error:
+        raise HTTPException(503,detail='Saved investigations are temporarily unavailable. Retry shortly.') from error
+
+
+@app.post('/api/v1/match/cases',status_code=201)
+def save_case(request:cases.CaseRequest):
+    try:
+        return cases.save(engine(),assistant(),request)
+    except KeyError as error:
+        raise HTTPException(409,detail='The search expired or its source changed. Search again before saving.') from error
+    except ValueError as error:
+        raise HTTPException(422,detail=str(error)) from error
+    except SiteAccessError as error:
+        raise HTTPException(403,detail='Site is not authorised.') from error
+    except (OSError, TimeoutError) as error:
+        raise HTTPException(503,detail='The investigation could not be stored. Your source records were not changed; retry shortly.') from error
+
+
+@app.get('/api/v1/match/cases/{case_id}')
+def saved_case(case_id:str):
+    try:
+        return cases.get(case_id,engine())
+    except (FileNotFoundError,ValueError) as error:
+        raise HTTPException(404,detail='Saved investigation not found.') from error
+    except SiteAccessError as error:
+        raise HTTPException(403,detail='The saved investigation contains a site outside the current allowed scope.') from error
+    except (OSError, TimeoutError) as error:
+        raise HTTPException(503,detail='The saved investigation is temporarily unavailable. Retry shortly.') from error

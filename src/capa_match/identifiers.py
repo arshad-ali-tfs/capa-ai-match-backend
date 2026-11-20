@@ -115,4 +115,21 @@ class SnapshotMatchService:
         additional = {name: text for name, text in additional.items() if name not in record.get('indexed_field_texts', {})}
         if additional:
             external['literal_field_texts'] = additional
+        # Original fields are an independent evidence view, not reconstructed
+        # from the normalized retrieval chunks.
+        source = self.identifiers.repository.get_record(source_pr_id)
+        external['original_field_texts'] = {name: str(source.fields.get(key) or '') for name,key in
+            [('DETAILED_DESCRIPTION','detailed_description'),('INVESTIGATION','investigation'),('CONCLUSION','conclusion')]
+            if source.fields.get(key)}
+        for capa in external.get('related_capas',[]):
+            identity=self.identifiers.identity(capa.get('match_pr_id',normalize_pr_id(capa['pr_id'])),record_type='capa')
+            if identity.site in self.service.allowed_sites:
+                retained=self.identifiers.repository.get_record(identity.pr_id)
+                plan=str(retained.fields.get('corrections_and_capa_plan') or '')
+                if plan:
+                    capa['plan_excerpt']=plan[:2000]
+                capa['date_closed']=retained.fields.get('date_closed') or capa.get('date_closed','')
+        from .evidence import coverage, mentions
+        external['evidence_coverage'] = coverage(external)
+        external['source_mentions'] = mentions(external)
         return external

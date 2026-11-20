@@ -101,6 +101,37 @@ def build_index(index_dir: str | Path, records: list[dict], capas: dict[str, lis
     if embedder.model_name != ('MOCK-hashed-token-embeddings-NOT-MPNET' if mock_embeddings else model_name):
         raise ValueError(f'Embedding model mismatch: {embedder.model_name} vs configured {model_name}')
 
+    # Reuse vectors only for byte-identical normalized text with the exact same
+    # model/runtime/dimension contract. Changed scientific passages are encoded
+    # again; the active generation is never edited in place.
+    vector_cache = {}
+    if replace and (path / 'manifest.json').is_file():
+        previous, _, prior_chunks, _ = load_index_metadata(path)
+        expected_backend = 'MOCK_UNFIT_FOR_REAL_SEARCH' if mock_embeddings else 'MPNet'
+        if (previous.get('model_name') == embedder.model_name and previous.get('embedding_backend') == expected_backend
+                and previous.get('embedding_runtime', 'torch') == ('mock' if mock_embeddings else getattr(embedder, 'runtime', runtime))
+                and previous.get('embedding_dimensions') == 768 and previous.get('normalize_embeddings') is True):
+            prior_collection = open_chroma(path, manifest=previous)
+            needed = {chunk['doc'] for chunk in chunks}
+            unique = {}
+            for chunk in prior_chunks:
+                if chunk['doc'] in needed:
+                    unique.setdefault(chunk['doc'], chunk['chunk_id'])
+            items = list(unique.items())
+            for start in range(0, len(items), 400):
+                values = items[start:start+400]
+                stored = prior_collection.get(ids=[key for _,key in values], include=['embeddings'])
+                vectors = stored.get('embeddings')
+                if vectors is None or len(vectors) != len(values):
+                    # Reuse is an optimization; a new generation can always be
+                    # encoded independently if the old store cannot supply it.
+                    vector_cache.clear()
+                    break
+                by_id = dict(zip(stored['ids'], unit_rows(vectors)))
+                vector_cache.update((text, by_id[key]) for text,key in values)
+    reused = len(vector_cache)
+    print(f'Reusing {reused} unchanged text vectors from the previous generation.',flush=True)
+
     # Build beside the active generation. Commit a small manifest only after all
     # vectors persist, so a failed model download/rebuild keeps the old index usable.
     generation = Path('generations') / uuid4().hex
@@ -112,10 +143,12 @@ def build_index(index_dir: str | Path, records: list[dict], capas: dict[str, lis
     collection = open_chroma(output, create=True)
     # Group similar lengths to reduce padding and encode repeated text once.
     build_chunks = sorted(chunks, key=lambda chunk: (len(chunk['doc']), chunk['chunk_id']))
-    vector_cache = {}
     started = last_progress = time.monotonic()
-    for start in range(0, len(build_chunks), batch_size):
-        batch = build_chunks[start:start + batch_size]
+    # Model.encode applies its own small compute batches. Persistence uses
+    # larger transactions to avoid thousands of small Chroma/SQLite commits.
+    persist_batch_size=max(256,batch_size)
+    for start in range(0, len(build_chunks), persist_batch_size):
+        batch = build_chunks[start:start + persist_batch_size]
         missing = list(dict.fromkeys(chunk['doc'] for chunk in batch if chunk['doc'] not in vector_cache))
         if missing:
             encoded = unit_rows(embedder.encode(missing))
@@ -148,6 +181,8 @@ def build_index(index_dir: str | Path, records: list[dict], capas: dict[str, lis
         'embedding_backend': 'MOCK_UNFIT_FOR_REAL_SEARCH' if mock_embeddings else 'MPNet',
         'embedding_runtime': 'mock' if mock_embeddings else getattr(embedder, 'runtime', runtime),
         'unique_embedded_texts': len(vector_cache),
+        'reused_embedded_texts': reused,
+        'new_embedded_texts': len(vector_cache) - reused,
         'embedding_dimensions': 768,
         'normalize_embeddings': True,
         'vector_db': 'ChromaDB',

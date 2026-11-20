@@ -16,7 +16,7 @@ from .contracts import SearchFilters
 from .core import split_chunks, unit_rows
 
 FIELDS = {'years': None, 'criticalities': 'criticality', 'dr_types': 'dr_type',
-          'departments': 'responsible_department'}
+          'departments': 'responsible_department', 'sites': 'site'}
 TITLE_WEIGHT = .30
 CODE = re.compile(r'(?<![A-Za-z0-9])[A-Za-z0-9]+(?:[-_./\u2010-\u2015][A-Za-z0-9]+)*(?![A-Za-z0-9])')
 NON_CODES = {'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec',
@@ -126,10 +126,22 @@ class MatchExplorer:
         value = SearchFilters.model_validate(values or {}).model_dump(mode='json')
         for key in FIELDS:
             value[key] = sorted(set(item.strip() if isinstance(item, str) else item for item in value[key]))
+        for site in [*value['sites'], *value['exclude_sites']]:
+            self.service._authorized_site(site)
         return value
 
     def accepts(self, record, filters, omit=None):
         opened = opened_date(record.get('date_opened'))
+        if record.get('criticality','').strip().casefold() in {value.casefold() for value in filters['exclude_criticalities']}:
+            return False
+        if opened and opened.year in filters['exclude_years']:
+            return False
+        if record['site'] in filters['exclude_sites']:
+            return False
+        if filters['status'] != 'any':
+            closed = bool(re.match(r'closed\b', record.get('status', '').strip(), re.I))
+            if (filters['status'] == 'closed') != closed:
+                return False
         for key, field in FIELDS.items():
             if key == omit or not filters[key]:
                 continue

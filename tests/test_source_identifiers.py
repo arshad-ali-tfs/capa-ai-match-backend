@@ -10,7 +10,7 @@ from capa_match.infrastructure.data.importer import import_snapshot
 from capa_match.infrastructure.data.repository import SqliteRecordRepository
 from capa_match.infrastructure.web import create_service
 from match_v1 import api
-from match_v1.core import MockEmbedder, split_chunks
+from match_v1.core import MockEmbedder, split_chunks, TEXT_NORMALIZATION_VERSION
 from match_v1.ingest import load_gtw
 from match_v1.search import MatchService
 from match_v1.testing import MemoryCollection
@@ -42,7 +42,8 @@ def leading_zero_source(tmp_path, monkeypatch):
                       embeddings=embedder.encode([item['doc'] for item in chunks]).tolist())
     manifest = {'source_snapshot_id': repository.metadata()['snapshot_id'], 'model_name': embedder.model_name,
                 'embedding_backend': 'MOCK_UNFIT_FOR_REAL_SEARCH', 'embedding_runtime': 'mock',
-                'site_counts': {'Site A': 1, 'Site B': 1}, 'chunk_size': 500, 'chunk_overlap': 50}
+                'site_counts': {'Site A': 1, 'Site B': 1}, 'chunk_size': 500, 'chunk_overlap': 50,
+                'source_statistics': {'text_normalization_version': TEXT_NORMALIZATION_VERSION}}
     service = MatchService(manifest=manifest, records={record['pr_id']: record for record in records},
                            chunks=chunks, capas=capas, collection=collection, embedder=embedder,
                            allowed_sites={'Site A'})

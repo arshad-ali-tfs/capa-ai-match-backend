@@ -5,7 +5,7 @@ import csv
 import re
 from pathlib import Path
 
-from .core import clean_for_index, normalize_pr_id
+from .core import TEXT_NORMALIZATION_VERSION, clean_for_index, normalize_pr_id
 
 
 def _get(row: dict[str, str], key: str) -> str:
@@ -83,6 +83,7 @@ def load_gtw(path: str | Path, *, division: str = 'DPD', limit: int = 200,
                 'date_closed': _get(row, 'DATE_CLOSED'),
                 'text': text,
                 'indexed_field_texts': {name: value for name, value in field_texts.items() if value},
+                'original_field_texts': {field: str(row.get(field) or '') for field in text_fields if _get(row, field)},
             })
     if not records:
         raise ValueError('No matching historical deviations. Check division/site/status/columns.')
@@ -106,6 +107,7 @@ def load_gtw(path: str | Path, *, division: str = 'DPD', limit: int = 200,
             }
     capas = {k: sorted(v.values(), key=lambda x: x['pr_id']) for k, v in links.items()}
     stats = {
+        'text_normalization_version': TEXT_NORMALIZATION_VERSION,
         'source_rows': scanned,
         'eligible_deviation_rows': eligible,
         'indexed_deviations': len(records),

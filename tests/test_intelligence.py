@@ -26,6 +26,8 @@ class FakeLLM:
             return self.plan, {'model': 'fictional-model', 'input_tokens': 12, 'output_tokens': 8}
         if name == 'match_relevance':
             return {'ranked':[{'id':row['id'],'relationship':'related','evidence':row['title'] or row['description'][:120]} for row in data['records'][:data['maximum_results']]]}, {'input_tokens':30,'output_tokens':20}
+        if name == 'match_grounding':
+            return {'supported_lines':[0,1],'evidence':[{'line':index,'id':data['records'][0]['id'],'field':'RECORD_NAME','quote':data['records'][0]['title']} for index in [0,1]]},{'input_tokens':20,'output_tokens':20}
         refs = ['UNKNOWN'] if self.invalid_refs else [data['records'][0]['id']]
         return {'lines': [{'text': text, 'references': refs} for text in [
             'The selected historical record describes a calibration event.',
@@ -147,7 +149,7 @@ def test_overview_only_uses_returned_authorized_records_and_preserves_capa_plan(
     assert {row['id'] for row in evidence}=={'101'}
     assert 'UNTRUSTED' in llm.calls[-1][1]
     repeat=helper.overview(service,result['summary_id'])
-    assert repeat['cached'] and len(llm.calls)==1
+    assert repeat['cached'] and len(llm.calls)==2
 
 
 def test_unknown_citations_are_rejected_instead_of_shown_as_evidence():
@@ -157,12 +159,12 @@ def test_unknown_citations_are_rejected_instead_of_shown_as_evidence():
     with pytest.raises(AssistanceUnavailable):helper.overview(service,result['summary_id'])
 
 
-def test_concurrent_overview_requests_share_one_provider_call():
+def test_concurrent_overview_requests_share_one_generation_and_grounding_check():
     llm=FakeLLM();helper=SearchIntelligence(llm);service=explorer()
     token=helper.search(service,request('101'))['summary_id']
     with ThreadPoolExecutor(max_workers=2) as pool:
         rows=list(pool.map(lambda _:helper.overview(service,token),range(2)))
-    assert len(llm.calls)==1 and sum(row['cached'] for row in rows)==1
+    assert len(llm.calls)==2 and sum(row['cached'] for row in rows)==1
 
 
 def test_changed_site_authority_or_snapshot_invalidates_cached_evidence():
@@ -179,7 +181,7 @@ def test_same_evidence_reuses_overview_across_repeated_searches():
     second=helper.search(service,request('101'))['summary_id']
     result=helper.overview(service,second)
     assert first!=second and result['search_id']==second and result['cached']
-    assert len(helper.llm.calls)==1
+    assert len(helper.llm.calls)==2
 
 
 def test_long_overview_gets_one_bounded_evidence_and_length_revision():
@@ -299,16 +301,17 @@ def test_provider_failure_never_broadens_explicit_year_or_classification():
     assert result['filters']['criticalities']==['Critical'] and result['total_matches']==0
 
 
-def test_invalid_relevance_quote_falls_back_to_recorded_title_without_displaying_fabrication():
+def test_invalid_relevance_quote_falls_back_to_local_candidates_without_an_ai_claim():
     llm=FakeLLM();helper=SearchIntelligence(llm);service=explorer();original=llm.invoke
     def fabricated(name,instructions,data,*args):
         if name=='match_relevance':return {'ranked':[{'id':data['records'][0]['id'],'relationship':'direct','evidence':'Fabricated statement about a nonexistent patient impact.'}]},{}
         return original(name,instructions,data,*args)
     llm.invoke=fabricated
     result=helper.search(service,request())
-    assert result['results'] and result['results'][0]['candidate_relationship']=='direct'
-    assert 'Fabricated' not in result['results'][0]['match_reasons'][0]
-    assert service.records[result['results'][0]['pr_id']]['record_name'] in result['results'][0]['match_reasons'][0]
+    assert result['results'] and not result['results'][0].get('candidate_relationship')
+    assert result['review_state']=='local_ranking'
+    assert all('Fabricated' not in json.dumps(row['match_reasons']) for row in result['results'])
+    assert any('could not be verified' in notice for notice in result['notices'])
 
 
 def test_capa_sentence_uses_retained_links_not_narrative_mentions_or_llm_claims():

@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import re
+from html import unescape
 from threading import Lock
 from typing import Iterable
 
@@ -34,13 +35,20 @@ def normalize_pr_id(value: object) -> str:
     return s
 
 
+TEXT_NORMALIZATION_VERSION = 'scientific-text-v2'
+# Only actual, known markup is removed. A generic <...> pattern destroys
+# specifications such as "<0.10% ... -->" and angle-wrapped notifications.
+HTML_TAG = re.compile(r'</?(?:html|body|div|span|p|br|hr|b|strong|i|em|u|s|sup|sub|font|a|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|pre|code|blockquote|h[1-6])(?:\s+[A-Za-z_:][^<>]*?)?\s*/?>', re.I)
+
+
 def clean_for_index(text: object) -> str:
     """Keep source meaning and numbers; normalize whitespace and HTML line breaks."""
     if text is None:
         return ''
     s = str(text)
     s = re.sub(r'<\s*br\s*/?>', '\n', s, flags=re.IGNORECASE)
-    s = re.sub(r'<[^>]+>', ' ', s)
+    s = HTML_TAG.sub(' ', s)
+    s = unescape(s)
     s = s.replace('\x00', ' ')
     s = re.sub(r'[ \t\r\f\v]+', ' ', s)
     s = re.sub(r'\n\s*\n+', '\n', s)

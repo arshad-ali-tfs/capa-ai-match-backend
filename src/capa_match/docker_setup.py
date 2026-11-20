@@ -27,7 +27,7 @@ def read_json(path):
 
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + '.' + uuid4().hex + '.tmp')
+    temporary = path.with_name(uuid4().hex[:12] + '.tmp')
     temporary.write_text(json.dumps(value, indent=2) + '\n', encoding='utf8')
     temporary.replace(path)
 
@@ -47,7 +47,8 @@ def verified_copy(source, target, size, checksum):
     if not source.is_file() or source.stat().st_size != size or digest(source) != checksum:
         raise ValueError(f'Missing or damaged repository runtime file: {source}. Check Git LFS access and rerun.')
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + '.' + uuid4().hex + '.partial')
+    # Keep atomic sibling names short under deep Hugging Face cache paths.
+    temporary = target.with_name(uuid4().hex[:12] + '.tmp')
     try:
         try:
             os.link(source, temporary)  # Immutable cache files can share storage.

@@ -9,7 +9,7 @@ from capa_match import main
 from capa_match.infrastructure.data.importer import import_snapshot
 from capa_match.infrastructure.data.repository import SqliteRecordRepository
 from match_v1 import api
-from match_v1.core import MockEmbedder, split_chunks
+from match_v1.core import MockEmbedder, split_chunks, TEXT_NORMALIZATION_VERSION
 from match_v1.ingest import load_gtw
 from match_v1.search import MatchService
 from match_v1.testing import MemoryCollection
@@ -43,7 +43,7 @@ def platform_client(monkeypatch, tmp_path):
                                 for name in {record['site'] for record in records}},
                 'chunk_size': 500, 'chunk_overlap': 50, 'text_fields': ['DETAILED_DESCRIPTION'],
                 'storage_directory': 'private-storage-path',
-                'source_statistics': {'source_file': 'private-source-file.csv'}}
+                'source_statistics': {'source_file': 'private-source-file.csv', 'text_normalization_version': TEXT_NORMALIZATION_VERSION}}
     index = tmp_path / 'index'
     index.mkdir()
     (index / 'manifest.json').write_text(json.dumps(manifest), encoding='utf8')

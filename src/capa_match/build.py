@@ -64,6 +64,11 @@ def main(argv=None, *, use_dotenv=True):
     except ValueError as error:
         parser.error(str(error))
     target = args.index_dir.resolve() if args.index_dir else Path(config['CAPA_DATA_DIR']) / ('match-' + metadata['snapshot_id'])
+    if not args.index_dir and config.get('MATCH_INDEX_DIR'):
+        configured=Path(config['MATCH_INDEX_DIR'])
+        active=configured/'manifest.json'
+        if active.is_file() and json.loads(active.read_text(encoding='utf-8')).get('source_snapshot_id')==metadata['snapshot_id']:
+            target=configured
     settings_requested = args.mock_embeddings or any(getattr(args, name) is not None for name in (
         'division', 'site', 'limit', 'model', 'batch_size', 'runtime', 'chunk_size', 'chunk_overlap', 'text_field'))
 
