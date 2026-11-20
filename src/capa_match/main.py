@@ -1,3 +1,4 @@
+from datetime import date
 from .cli import configure
 
 configure()
@@ -155,10 +156,30 @@ def filter_options(request: SearchRequest):
     except (OSError, RuntimeError) as error:
         raise HTTPException(503, detail='MATCH filter options are unavailable.') from error
 
+@lru_cache(maxsize=1)
+def watchlist_service():
+    from .watchlist import Watchlist
+    return Watchlist()
+
+
+@app.get('/api/v1/match/matched-records/{pr_id}/watchlist')
+def selected_watchlist(pr_id: str, site: str, as_of: date | None = None):
+    try:
+        return watchlist_service().inspect(engine(), pr_id, site, as_of)
+    except SiteAccessError as error:
+        raise HTTPException(403, detail='Site is not authorised.') from error
+    except KeyError as error:
+        raise HTTPException(404, detail='Record not found for the selected site.') from error
+    except (ValueError, OSError, RuntimeError) as error:
+        raise HTTPException(503, detail='The retained indexed history is unavailable. Record details remain available.') from error
+
+
 @app.get('/api/v1/match/matched-records/{pr_id}')
 def matched_record(pr_id: str, site: str):
     try:
-        return engine().record(pr_id, site)
+        from .retained import enriched
+        service = engine()
+        return enriched(service, service.record(pr_id, site))
     except SiteAccessError as error:
         raise HTTPException(403, detail='Site is not authorised.') from error
     except (KeyError, ValueError) as error:
