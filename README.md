@@ -47,7 +47,7 @@ Branch `codex/match-search-experiments-20261119` adds structured exploration to 
 - Smart mode recognizes exact deviation IDs, short equipment/document references and short keywords. Identifier searches preserve every digit and leading zero while tolerating separators, for example `MFG859` / `MFG-859`. Unknown identifiers return no matches instead of unrelated similar records. Use Keywords to search a numeric equipment or batch reference rather than an exact deviation ID.
 - Keywords require all words; quotation marks or Exact phrase require a literal phrase. These search full retained description, conclusion, recorded title and source investigation text where available. Investigation text is loaded read-only from the same source snapshot; it has not been added to semantic vectors.
 - Longer descriptions use meaning and keywords; Meaning mode compares broader wording without hard identifier constraints. Filters constrain retrieval before ranking. Experimental relevance uses 70% narrative rank and 30% recorded event-title meaning among up to 50 retrieved candidates. Narrative hybrid rank retains its original 70/20/10 formula. Scores prioritize review; they are not correctness or recurrence probabilities. Literal and browse results have no similarity score.
-- Filter counts describe the indexed population, not the entire source export. This installation has 4,292 eligible historical DPD deviations marked Closed - Done, not all 19,643 accepted source rows. CAPA completion means a retained linked CAPA marked Closed - Done; it does not establish effectiveness.
+- Filter counts describe the indexed population, not the entire source export. MATCH now indexes usable deviations across DPD, DSD, CTD and Global and retains all source workflow statuses. Search defaults to completed (Closed - Done) investigations; ongoing and cancelled records have separate controls. Source totals also include CAPAs and records without searchable text. CAPA completion means a retained linked CAPA marked Closed - Done; it does not establish effectiveness.
 
 `POST /api/v1/match/facets` supplies authorized filter choices and counts. Send an explicit `mode` (including `auto`) to opt into the explorer API; add `assist:true` for query assistance and an overview ID. Existing narrative clients that omit `assist`, `mode`, `filters` and `offset` retain the original hybrid ranking. `/index` reports local model warm-up separately; browsing and literal retrieval do not need model inference. Cached MPNet artifacts load offline first. No new dependency, source import or index rebuild is required. Optional AI calls are billed by the configured provider. See [API details](docs/API.md).
 
@@ -100,7 +100,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Match.ps1
 
 The command retrieves missing Git LFS files, verifies the bundled source and pinned MPNet model, builds the Docker image, imports the source, prepares the verified full Linux index (or builds one for a new source) and configures its sites. It then starts the detached backend and verifies single-site and all-sites searches. **A ready message means search was tested, not just that the API process started.** No OpenAI key or paid model API calls are required.
 
-Open [API docs](http://127.0.0.1:8102/docs). The backend continues running after the terminal closes. First setup downloads about 650 MiB of source, model and verified Linux index files. It imports the source and prepares 4,292 eligible deviations across 25 sites. New sources and explicit rebuilds print indexing progress and can take substantially longer. Index counts can be lower than source counts because MATCH keeps its existing eligibility rules. Models use the same MPNet revision, ONNX FP32 runtime, fields, chunking and ranking as before.
+Open [API docs](http://127.0.0.1:8102/docs). The backend continues running after the terminal closes. First setup downloads about 650 MiB of source, model and verified Linux index files. It imports the source and prepares usable deviations across all divisions and workflow statuses. The bundled source currently provides 12,203 completed and 777 searchable cancelled deviations; it contains no ongoing deviations. The larger real index is built locally on first preparation and can take substantial time. New sources and explicit rebuilds print indexing progress and can take substantially longer. Index counts can be lower than source counts because MATCH keeps its existing eligibility rules. Models use the same MPNet revision, ONNX FP32 runtime, fields, chunking and ranking as before.
 
 ### Repeat launches, updates and options
 
@@ -196,7 +196,7 @@ AUTHOR calls MATCH over HTTP rather than importing its Python code:
 
 ## Data and index lifecycle
 
-The reference workstation has **19,643 accepted source records**. Its MATCH index contains **4,292 eligible deviations**, **24,440 chunks**, across **25 sites**. These are coverage figures for that source/index, not fixed application limits. See [source provenance](data/sources/README.md).
+The reference source has **19,643 accepted rows**: **13,085 deviations** and **6,558 CAPAs**. The expanded MATCH index retains **12,203 completed deviations** and **777 searchable cancelled deviations** across DPD, DSD, CTD and Global. The remaining 105 cancelled deviations have no searchable description/conclusion text. This export contains no ongoing deviations. These are source coverage figures, not fixed application limits. See [source provenance](data/sources/README.md).
 
 | Location | Contents | In Git? |
 |---|---|---|
@@ -273,3 +273,14 @@ Other-record evidence is capped at five examples per signal; counts cover the fu
 site corpus. Up to eight signals are displayed, with available-signal coverage.
 The recent window is the inclusive preceding 12 calendar months. Missing/future
 opened dates are excluded from dated breakdowns and reported separately.
+
+
+### Division and investigation scope
+
+Division is a multi-select filter: DPD, DSD, CTD and Global can be searched separately or together. The visible investigation-status selector defaults to Completed (Closed - Done). Ongoing uses non-closed source statuses; its findings remain provisional. All investigations includes both, plus other/unclassified source statuses. Cancelled deviations require explicit inclusion, which switches to All; they are context rather than completed investigation precedents. An optional exact Source status filter is available under More filters. All filters constrain retrieval before ranking and summaries.
+
+The current accepted export contains 13,085 deviations and 6,558 CAPAs. It has 12,203 completed and 882 cancelled deviations, with no ongoing records. Of the cancelled records, 777 have searchable description/conclusion text; 105 do not. CAPAs remain related evidence rather than additional deviation search results. An empty Ongoing view is shown honestly; closed cases are not a substitute. New source exports containing active investigations are supported by the same import/build workflow.
+
+The platform builder defaults to every division and status. Use `python -m capa_match.build --rebuild` after importing a source; `--division DPD` or `--status-scope completed` explicitly narrows an index. The standalone `match_v1.cli build` retains its older defaults and accepts `--status-scope all`. Build a new generation, validate it, then restart MATCH; previous index generations and immutable source snapshots remain available for rollback. The deployment-preparation policy includes division/status scope, so a DPD-only bundle cannot silently replace the expanded corpus. Existing runtime orchestrators must update their pinned index path when activating a new build.
+
+Watchlist uses the submitted division/status scope at the selected site across all indexed dates; opened-year, criticality and other query filters do not narrow its history. Completed, ongoing and cancelled counts are separate for the site scope and each signal. The selected deviation is excluded from other-record counts. Ongoing/cancelled source qualifications also appear beside selected records and summaries. Existing AUTHOR/legacy narrative retrieval remains completed-only. A single bounded lexical-population cache speeds repeated searches without retaining multiple large division corpora.

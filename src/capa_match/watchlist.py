@@ -5,8 +5,10 @@ from datetime import date, datetime, timezone
 import re
 from threading import Lock
 from .retained import enriched, original_fields, site_records
+from match_v1.contracts import SearchFilters
+from match_v1.scope import accepts_status, status_counts
 
-VERSION='match-watchlist-v1'
+VERSION='match-watchlist-division-status-v2'
 ASSET=re.compile(r'(?<![A-Za-z0-9])(?:UHPLC|HPLC|UPLC|LC|GC|EQP?|INS|INST|ASSET|BAL|FRZ|FZR|MFG|MIX|PT|TT|AUT|OVEN|SCALE|INC)[-_ ]{0,2}(?:[A-Z]{1,4}[-_])?\d{2,8}(?:[-_][A-Z0-9]{1,8})?(?![A-Za-z0-9])',re.I)
 NAMED_ASSET=re.compile(r'\b(?:equipment|asset|instrument)(?:\s+(?:id|number|no\.?))?\s*[:#]\s*([A-Z]{1,8}[-_]\d{2,8}(?:[-_][A-Z0-9]{1,8})?)(?![A-Za-z0-9])',re.I)
 LOCATION=re.compile(r'\b(?:room|suite|line|building)\s*(?:#|no\.?)?\s*[A-Z]?[-_]?\d{1,5}[A-Z]?(?![A-Za-z0-9])',re.I)
@@ -83,18 +85,18 @@ def entities(record):
 
 
 def project(record):
-    return {key:record.get(key,'') for key in ['pr_id','site','record_name','date_opened','criticality','status']} | {'entities':entities(record),'events':events(record)}
+    return {key:record.get(key,'') for key in ['pr_id','site','division','record_name','date_opened','criticality','status']} | {'entities':entities(record),'events':events(record)}
 
 
 def evidence(record,proof):
-    return {key:record[key] for key in ['pr_id','site','record_name','date_opened','criticality','status']} | proof
+    return {key:record[key] for key in ['pr_id','site','division','record_name','date_opened','criticality','status']} | proof
 
 
 class Watchlist:
     def __init__(self):
         self.sites=OrderedDict();self.lock=Lock()
 
-    def inspect(self,service,pr_id,site,as_of=None):
+    def inspect(self,service,pr_id,site,as_of=None,filters=None):
         selected=service.record(pr_id,site)  # Exact identity and site access precede cache/scans.
         selected=enriched(service,selected)
         as_of=as_of or datetime.now(timezone.utc).date()
@@ -105,6 +107,14 @@ class Watchlist:
                 self.sites[authority]=(core,tuple(project(record) for record in site_records(service,site)))
                 while len(self.sites)>3:self.sites.popitem(last=False)
             self.sites.move_to_end(authority);records=self.sites[authority][1]
+        criteria=SearchFilters.model_validate(filters or {'record_scope':'all'})
+        divisions={value.strip().casefold() for value in criteria.divisions}
+        statuses={value.strip().casefold() for value in criteria.statuses}
+        def accepts(record):
+            return (not divisions or record['division'].casefold() in divisions) and (not statuses or record['status'].casefold() in statuses) and accepts_status(record['status'],criteria.record_scope,criteria.include_cancelled)
+        available=records
+        records=[record for record in records if accepts(record)]
+        selected_in_scope=any(record['pr_id']==pr_id for record in records)
         seed=project(selected)
         others=[record for record in records if record['pr_id']!=pr_id]
         try:start=as_of.replace(year=as_of.year-1)
@@ -119,6 +129,7 @@ class Watchlist:
             opened=[opened for record in matches if (opened:=day(record['date_opened'])) and opened<=as_of]
             signals.append({'key':key,'kind':kind,'label':label,'other_record_count':len(matches),
                 'failure_indicator_count':nearby_count,'last_12_months':recent,'last_opened':max(opened).isoformat() if opened else None,
+                'status_counts':status_counts(matches),
                 'year_counts':[{'year':int(year),'count':count} for year,count in sorted(years.items())],
                 'evidence':[evidence(record,proof_fn(record)) for record in matches[:5]],
                 'seed_evidence':proof_fn(seed),'search_query':label if kind=='equipment' else None})
@@ -133,8 +144,10 @@ class Watchlist:
         return {'version':VERSION,'pr_id':pr_id,'site':site,'source_snapshot_id':service.manifest.get('source_snapshot_id'),
             'method':'deterministic','as_of':as_of.isoformat(),'recent_from':start.isoformat(),'scope':'same_site_indexed_history',
             'scope_record_count':len(records),'other_record_count':len(others),
+            'selected_in_scope':selected_in_scope,'status_counts':status_counts(records),'available_status_counts':status_counts(available),
+            'filters':{key:criteria.model_dump(mode='json')[key] for key in ['divisions','statuses','record_scope','include_cancelled']},
             'opened_from':min(dates).isoformat() if dates else None,'opened_to':max(dates).isoformat() if dates else None,
             'undated_count':sum(day(record['date_opened']) is None for record in records),
             'future_dated_count':sum(bool((opened:=day(record['date_opened'])) and opened>as_of) for record in records),
             'available_signals':len(signals),'signals':signals[:8],
-            'interpretation':'Counts are distinct other indexed deviations at this site, across all available dates, independent of the current search filters. Equipment/location counts are literal mentions; event indicators are rule-based title/description matches. They do not establish repeated root causes, equipment causation, a recurrence rate or CAPA effectiveness.'}
+            'interpretation':'Counts are distinct other indexed deviations at this site, across all dates, within the submitted division and workflow status scope. Other search filters do not constrain this history. Equipment/location counts are literal mentions; event indicators are rule-based title/description matches. Ongoing records are provisional and cancelled records are not completed investigation precedents. Counts do not establish repeated root causes, equipment causation, a recurrence rate or CAPA effectiveness.'}
