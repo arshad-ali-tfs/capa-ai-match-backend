@@ -30,11 +30,13 @@ from .evidence import passages, original_fields, locate_quote, coverage
 from .provenance import index_generation
 
 LOG = logging.getLogger(__name__)
-VERSION = 'match-assist-division-status-quality-v3'
+VERSION = 'match-assist-overview-retries-quality-v3'
 
 
 class AssistanceUnavailable(RuntimeError):
-    pass
+    def __init__(self, message, *, reason='provider_unavailable', retryable=True):
+        super().__init__(message)
+        self.reason, self.retryable = reason, retryable
 
 
 def object_schema(properties):
@@ -140,11 +142,11 @@ class StructuredLLM:
 
     def invoke(self, name, instructions, data, schema, max_tokens=900):
         if not self.configured:
-            raise AssistanceUnavailable('AI assistance is not configured.')
+            raise AssistanceUnavailable('AI assistance is not configured.', reason='configuration', retryable=False)
         parsed = urlparse(self.base)
         if (parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', 'localhost'})
                 or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment):
-            raise AssistanceUnavailable('Invalid model endpoint configuration.')
+            raise AssistanceUnavailable('Invalid model endpoint configuration.', reason='configuration', retryable=False)
         url = self.base if self.base.endswith('/responses') else self.base + '/responses'
         model = self.review_model if name in {'match_relevance', 'match_overview', 'match_grounding'} else self.model
         body = {'model': model, 'store': False, 'instructions': instructions,
@@ -153,7 +155,11 @@ class StructuredLLM:
         try:
             req = Request(url, data=json.dumps(body).encode(), headers={
                 'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'})
-            timeout = float(os.getenv('MATCH_ASSIST_TIMEOUT_SECONDS', '30'))
+            from .overview_resilience import provider_timeout
+            try:
+                timeout = provider_timeout(float(os.getenv('MATCH_ASSIST_TIMEOUT_SECONDS', '30')))
+            except ValueError:
+                raise AssistanceUnavailable('Invalid model timeout configuration.', reason='configuration', retryable=False) from None
             with urlopen(req, timeout=timeout) as response:
                 raw = response.read(200001)
             if len(raw) > 200000:
@@ -168,7 +174,13 @@ class StructuredLLM:
                 raise ValueError('Expected a JSON object')
             return result, {'model': model, **{key: payload.get('usage', {}).get(key, 0)
                                                    for key in ('input_tokens', 'output_tokens')}}
-        except (HTTPError, URLError, OSError, ValueError, TypeError, KeyError) as error:
+        except HTTPError as error:
+            transient = error.code in {408, 409, 425, 429, 500, 502, 503, 504}
+            reason = 'rate_limited' if error.code == 429 else 'provider_unavailable' if transient else 'request_rejected'
+            LOG.warning('MATCH AI request unavailable (HTTP %s).', error.code)
+            error.close()
+            raise AssistanceUnavailable('AI assistance is temporarily unavailable.', reason=reason, retryable=transient) from None
+        except (URLError, OSError, ValueError, TypeError, KeyError) as error:
             # Neither upstream bodies nor source prompts/credentials enter logs/errors.
             LOG.warning('MATCH AI request unavailable (%s).', type(error).__name__)
             raise AssistanceUnavailable('AI assistance is temporarily unavailable.') from None
@@ -464,10 +476,12 @@ class SearchIntelligence:
         if entry is None or entry['authority'] != self.authority(service):
             raise KeyError('Search expired. Search again to prepare an answer.')
         with entry['lock']:
-            if entry['summary'] is not None:
+            if entry['summary'] is not None and (entry['summary'].get('verification_status') != 'unavailable'
+                                                  or monotonic() < entry.get('unavailable_until', 0)):
                 return {**deepcopy(entry['summary']), 'search_id':search_id, 'cached':True}
             summary = build_summary(service, entry['result'], self.llm, search_id)
             entry['summary'] = deepcopy(summary)
+            entry['unavailable_until'] = monotonic() + 15 if summary.get('verification_status') == 'unavailable' else 0
             return summary
 
 
