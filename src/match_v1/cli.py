@@ -72,6 +72,7 @@ def main(argv=None):
     build = sub.add_parser('build', help='Build persistent MPNet+Chroma index from GTW CSV')
     build.add_argument('--gtw', required=True, help='Path to GTW flat-file CSV')
     build.add_argument('--division', default='DPD', help='DPD, DSD, CTD, Global, or empty string for all')
+    build.add_argument('--status-scope', choices=('completed','ongoing','all'), default='completed', help='Workflow statuses to retain in the index')
     build.add_argument('--site', help='Optionally limit indexed corpus to a single site')
     build.add_argument('--limit', type=int, default=200, help='Default 200 deviations; 0=all eligible')
     build.add_argument('--index-dir', default='local_index')
@@ -103,7 +104,7 @@ def main(argv=None):
     if args.command == 'build':
         if args.batch_size <= 0:
             parser.error('--batch-size must be positive')
-        records, capas, stats = load_gtw(args.gtw, division=args.division, site=args.site,
+        records, capas, stats = load_gtw(args.gtw, division=args.division, site=args.site, status_scope=args.status_scope,
                                           limit=args.limit,
                                           text_fields=tuple(args.text_field or ['DETAILED_DESCRIPTION']))
         print('Selected', len(records), 'eligible deviations, linked', stats['linked_capas'], 'CAPAs')

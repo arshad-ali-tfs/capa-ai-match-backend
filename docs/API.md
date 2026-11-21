@@ -261,3 +261,34 @@ Implementation references: [OpenAI structured Responses](https://developers.open
 - [HTTP search and record handlers](../src/capa_match/main.py)
 - [Source, readiness and capabilities](../src/capa_match/infrastructure/web.py)
 - [Search request and site-scope validation](../src/match_v1/contracts.py)
+
+
+## Division and workflow scope
+
+`POST /api/v1/match/search` and `/facets` accept these additional `filters` fields:
+
+```json
+{
+  "query": "HPLC system suitability failures",
+  "all_sites": true,
+  "mode": "auto",
+  "assist": true,
+  "filters": {
+    "divisions": ["DPD"],
+    "record_scope": "completed",
+    "include_cancelled": false,
+    "statuses": []
+  }
+}
+```
+
+- `divisions`: OR within this source field (DPD, DSD, CTD, Global); empty means all permitted divisions. All filters intersect before candidate retrieval and ranking.
+- `record_scope`: `completed` (default, Closed - Done), `ongoing` (non-closed source workflow), or `all` (both and other/unclassified states).
+- `include_cancelled`: default false; cancellation is included only with `record_scope: all` and this flag true. The UI switches to All when this checkbox is enabled.
+- `statuses`: optional exact source workflow labels within the selected investigation scope.
+
+Search/facet `status_counts` describe the authorized population after the other filters, before workflow-status selection. Index `status_counts` describe all authorized indexed records. Keys are `completed`, `ongoing`, `cancelled`, and `other`; these are source categories, not evidence of CAPA effectiveness or confirmed cause. Overview `reviewed_status_counts` cover only the up-to-six reviewed returned deviations. Original status and division are supplied to both answer generation and independent grounding. Ongoing findings remain provisional; cancelled records do not establish completed investigation outcomes. Legacy narrative retrieval used by AUTHOR remains completed-only.
+
+`GET /api/v1/match/matched-records/{id}/watchlist` accepts repeated `divisions` and `statuses` query parameters plus `record_scope` and `include_cancelled`. Its endpoint default is `record_scope=all`, cancelled excluded; the frontend always passes the submitted search division/status scope. Dates, criticality and other search filters do not constrain its historical scan. Scope and signal `status_counts` are separate; `available_status_counts` cover the full authorized indexed site before division/status selection. `selected_in_scope` determines whether `other_record_count` is one less than the scope count or equal to it. Counts never include the selected deviation. Source references include their original status and division. All identity/site authorization checks still precede history access.
+
+The bundled source has no ongoing deviations. Selecting Ongoing returns an empty result rather than substituting closed cases. Import a source containing active records and build a new index generation to populate that scope. CAPA rows stay linked evidence rather than deviation candidates. The 105 cancelled records without searchable description/conclusion text remain outside this source's index; no narrative is fabricated.

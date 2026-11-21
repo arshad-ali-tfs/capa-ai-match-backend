@@ -9,8 +9,10 @@ import logging
 from threading import Lock, Thread
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from functools import lru_cache
-from fastapi import HTTPException
-from match_v1.contracts import SearchRequest
+from fastapi import HTTPException, Query
+from typing import Literal
+from match_v1.scope import status_counts
+from match_v1.contracts import SearchRequest, SearchFilters
 from match_v1.search import SiteAccessError
 from capa_match.infrastructure.web import create_service
 from capa_match.infrastructure.storage import local_directory
@@ -90,6 +92,7 @@ def index_metadata():
         'embedding_backend': manifest['embedding_backend'],
         'embedding_runtime': manifest.get('embedding_runtime', 'torch'),
         'mock_embeddings': manifest['embedding_backend'] != 'MPNet',
+        'status_counts': status_counts(record for record in service.records.values() if record['site'] in service.allowed_sites),
         'records': len(service.records),
         'chunks': len(service.chunks),
         'searchable_records': sum(item['deviation_count'] for item in allowed_sites),
@@ -163,9 +166,16 @@ def watchlist_service():
 
 
 @app.get('/api/v1/match/matched-records/{pr_id}/watchlist')
-def selected_watchlist(pr_id: str, site: str, as_of: date | None = None):
+def selected_watchlist(pr_id: str, site: str, as_of: date | None = None,
+                       divisions: list[str] | None = Query(default=None, max_length=50),
+                       statuses: list[str] | None = Query(default=None, max_length=50),
+                       record_scope: Literal['completed','ongoing','all'] = 'all', include_cancelled: bool = False):
     try:
-        return watchlist_service().inspect(engine(), pr_id, site, as_of)
+        filters=SearchFilters(divisions=divisions or [],statuses=statuses or [],record_scope=record_scope,include_cancelled=include_cancelled).model_dump(mode='json')
+    except ValueError as error:
+        raise HTTPException(422, detail='Invalid division or status filters.') from error
+    try:
+        return watchlist_service().inspect(engine(), pr_id, site, as_of, filters=filters)
     except SiteAccessError as error:
         raise HTTPException(403, detail='Site is not authorised.') from error
     except KeyError as error:

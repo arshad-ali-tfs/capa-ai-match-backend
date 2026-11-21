@@ -6,6 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class SearchFilters(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    divisions: list[str] = Field(default_factory=list, max_length=50)
+    statuses: list[str] = Field(default_factory=list, max_length=50)
+    record_scope: Literal['completed', 'ongoing', 'all'] = 'completed'
+    include_cancelled: bool = False
     years: list[int] = Field(default_factory=list, max_length=100)
     criticalities: list[str] = Field(default_factory=list, max_length=20)
     exclude_criticalities: list[str] = Field(default_factory=list,max_length=20)
@@ -21,9 +25,11 @@ class SearchFilters(BaseModel):
 
     @model_validator(mode='after')
     def valid_values(self):
+        if self.status == 'open' and 'record_scope' not in self.model_fields_set:
+            object.__setattr__(self, 'record_scope', 'ongoing')
         if any(not 1900 <= year <= 2200 for year in [*self.years,*self.exclude_years]):
             raise ValueError('Opened years must be between 1900 and 2200.')
-        for values in (self.criticalities,self.exclude_criticalities,self.dr_types,self.departments,self.sites,self.exclude_sites):
+        for values in (self.divisions,self.statuses,self.criticalities,self.exclude_criticalities,self.dr_types,self.departments,self.sites,self.exclude_sites):
             if any(not value.strip() or len(value) > 200 for value in values):
                 raise ValueError('Filter values must contain 1–200 characters.')
         if self.date_from and self.date_to and self.date_from > self.date_to:

@@ -24,12 +24,13 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 from match_v1.contracts import SearchFilters
 from match_v1.explorer import identifiers
+from .division_scope import requested_divisions, strip_divisions
 from .scope import resolve_scope, filter_only, question_intent, requested_years
 from .evidence import passages, original_fields, locate_quote, coverage
 from .provenance import index_generation
 
 LOG = logging.getLogger(__name__)
-VERSION = 'match-assist-v2-direct-answer-v1'
+VERSION = 'match-assist-division-status-quality-v3'
 
 
 class AssistanceUnavailable(RuntimeError):
@@ -249,6 +250,7 @@ class SearchIntelligence:
         query = request.query.strip()
         # Validate scope before sending even the query to a provider.
         scope = resolve_scope(service, request, query)
+        scope['filters']['divisions'] = requested_divisions(service,query,scope['filters']['divisions'])
         options = service.facets(site=request.site, all_sites=request.all_sites)
         key = hashlib.sha256(json.dumps([VERSION, self.authority(service), scope['as_of'], request.model_dump(mode='json', exclude={'offset', 'top_k'})], sort_keys=True).encode()).hexdigest()
         cached = self.plans.get(key)
@@ -277,7 +279,7 @@ class SearchIntelligence:
             pass
         # The model supplies event wording only. Scope is resolved and validated
         # independently, including negative and multi-site constraints.
-        if filter_only(query, service):
+        if filter_only(strip_divisions(query), service):
             plan['retrieval_query'] = ''
         elif not plan['retrieval_query'].strip():
             plan['retrieval_query'] = fallback_query(query)

@@ -152,6 +152,8 @@ def resolve_scope(service, request, query, today=None):
                 filters['status']='closed'
             elif any(mentions(part,'closed') for part in negative):
                 filters['status']='open'
+    if filters['status'] == 'open' and 'record_scope' not in request.filters.model_fields_set:
+        filters['record_scope']='ongoing'
     if filters['status'] == 'open' and not any(not re.match(r'closed\b',row.get('status',''),re.I) for row in service.records.values() if row['site'] in service.allowed_sites):
         notices.append('This index contains historical closed deviations only. It cannot supply currently open deviations; no closed cases will be substituted.')
     # A single mentioned site retains the familiar site label; a union/exclusion
