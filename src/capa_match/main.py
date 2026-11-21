@@ -9,6 +9,7 @@ import logging
 from threading import Lock, Thread
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from functools import lru_cache
+from contextlib import asynccontextmanager
 from fastapi import HTTPException, Query
 from typing import Literal
 from match_v1.scope import status_counts
@@ -17,6 +18,7 @@ from match_v1.search import SiteAccessError
 from capa_match.infrastructure.web import create_service
 from capa_match.infrastructure.storage import local_directory
 from capa_match.intelligence import SearchIntelligence, OverviewRequest, AssistanceUnavailable
+from pydantic import BaseModel, ConfigDict, Field
 
 app = create_service('match')
 _warmup_lock = Lock()
@@ -28,12 +30,10 @@ def assistant():
 
 
 def query_model_state(service):
-    """Prepare the local query model while investigators choose their filters."""
+    """Prepare the complete local retrieval path while filters are chosen."""
     if service.manifest['embedding_backend'] != 'MPNet':
         return 'ready'
     model = service.embedder
-    if getattr(model, '_session', None) is not None or getattr(model, '_model', None) is not None:
-        return 'ready'
     with _warmup_lock:
         state = getattr(model, '_match_warmup_state', None)
         if state is not None:
@@ -41,13 +41,33 @@ def query_model_state(service):
         model._match_warmup_state = 'warming'
         def prepare():
             try:
-                model.encode(['Historical deviation search.'])
+                from .warmup import prepare_search
+                prepare_search(service)
                 model._match_warmup_state = 'ready'
             except Exception as error:
                 model._match_warmup_state = 'unavailable'
                 logging.getLogger(__name__).warning('MATCH query-model warm-up failed (%s).', type(error).__name__)
         Thread(target=prepare, name='match-query-model-warmup', daemon=True).start()
         return model._match_warmup_state
+
+
+def prepare_local_search():
+    if os.getenv('MATCH_WARM_SEARCH', '1') == '0':
+        return
+    try:
+        query_model_state(engine())
+    except HTTPException:
+        # Health/source inspection remains available when assets need setup.
+        logging.getLogger(__name__).warning('MATCH search warm-up awaits valid local assets.')
+
+
+@asynccontextmanager
+async def search_lifespan(application):
+    prepare_local_search()
+    yield
+
+
+app.router.lifespan_context = search_lifespan
 
 @lru_cache(maxsize=1)
 def engine():
@@ -100,6 +120,7 @@ def index_metadata():
         'disclaimer': 'Scores are relative ranking signals, not probabilities of recurrence.',
         'warning': 'Site access uses the server allowed-site configuration. Local mode does not provide enterprise authentication.' if os.getenv('CAPA_ENV', 'local') == 'local' else None,
         'ai_assistance_configured': assistant().llm.configured,
+        'progressive_search': True,
     }
 
 
@@ -138,6 +159,23 @@ def evidence_overview(request: OverviewRequest):
         raise HTTPException(403, detail='Site is not authorised.') from error
     except (AssistanceUnavailable, OSError, RuntimeError, ValueError) as error:
         raise HTTPException(503, detail='The AI evidence overview is unavailable. You can still review the source results.') from error
+
+
+class RelevanceRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    review_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+
+
+@app.post('/api/v1/match/review')
+def relevance_review(request: RelevanceRequest):
+    try:
+        return assistant().performance.review(engine(), request.review_id)
+    except KeyError as error:
+        raise HTTPException(404, detail='This relevance review expired. Search again.') from error
+    except SiteAccessError as error:
+        raise HTTPException(403, detail='Site is not authorised.') from error
+    except (OSError, RuntimeError, ValueError) as error:
+        raise HTTPException(503, detail='Relevance review is unavailable. Initial source candidates remain available.') from error
 
 
 @app.post('/api/v1/match/facets')

@@ -60,10 +60,10 @@ def test_legacy_author_retrieval_excludes_ongoing_and_cancelled_cases():
     assert not {'102','103'} & ids(result)
 
 def test_repeated_filtered_queries_reuse_their_population_and_never_leak_between_divisions(monkeypatch):
-    from match_v1 import search as module
-    original=module.BM25;calls=[]
+    from match_v1 import lexical as module
+    original=module.LexicalIndex;calls=[]
     def count_builds(docs):calls.append(1);return original(docs)
-    monkeypatch.setattr(module,'BM25',count_builds)
+    monkeypatch.setattr(module,'LexicalIndex',count_builds)
     service=mixed()
     query='HPLC equipment calibration failed'
     for _ in range(2):
@@ -72,7 +72,7 @@ def test_repeated_filtered_queries_reuse_their_population_and_never_leak_between
     assert len(calls)==1
     value=service.search(query,all_sites=True,mode='semantic',filters={'divisions':['DSD'],'record_scope':'all'})
     assert value['results'] and all(row['division']=='DSD' for row in value['results'])
-    assert len(calls)==2
+    assert len(calls)==1  # New cohorts share the immutable posting store.
 
 def test_explicit_division_text_is_resolved_without_overriding_selected_filters_or_asset_codes():
     service=mixed()

@@ -248,6 +248,8 @@ class SearchIntelligence:
         self.overviews = BoundedCache(limit=64, ttl=900)
         self.rankings = BoundedCache(limit=128, ttl=900)
         self.cache_lock = Lock()
+        from .search_performance import SearchPerformance
+        self.performance = SearchPerformance(self, BoundedCache)
 
     @staticmethod
     def authority(service):
@@ -257,7 +259,7 @@ class SearchIntelligence:
         query = request.query.strip()
         # Validate scope before sending even the query to a provider.
         options = service.facets(site=request.site, all_sites=request.all_sites)
-        key = hashlib.sha256(json.dumps([VERSION, self.authority(service), request.model_dump(mode='json', exclude={'offset', 'top_k'})], sort_keys=True).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps([VERSION, self.authority(service), datetime.now(timezone.utc).date().isoformat(), request.model_dump(mode='json', exclude={'offset', 'top_k', 'progressive'})], sort_keys=True).encode()).hexdigest()
         cached = self.plans.get(key)
         if cached:
             return deepcopy(cached)
@@ -365,7 +367,7 @@ class SearchIntelligence:
                     seen.add(item['id'])
                 self.rankings.put(signature, reviewed)
             except AssistanceUnavailable:
-                return rows[:limit], None
+                return rows[:limit], None, 'unavailable'
         by_id = {row['pr_id']: row for row in rows}
         selected = []
         for item in reviewed:
@@ -378,15 +380,20 @@ class SearchIntelligence:
                 quote = quote.rsplit(' ', 1)[0].rstrip()
             row['match_reasons'].append('Source evidence: “' + quote + '”' + ('…' if clipped else ''))
             selected.append(row)
-        return selected, usage
+        return selected, usage, 'reviewed'
 
     def search(self, service, request):
+        return self.performance.run(service, request, self.retrieve)
+
+    def retrieve(self, service, request):
         query = request.query.strip()
         codes = identifiers(query)
         only_codes = bool(codes) and compact(query) == ''.join(compact(code) for code in codes)
         exact_id = query.isdigit() or bool(re.fullmatch(r'(?:PR(?:_ID)?|deviation(?:\s+ID)?)(?:\s*[:#-]\s*|\s+)[A-Za-z0-9._-]+|PR\d+', query, re.I))
         literal = not query or request.mode != 'auto' or only_codes or exact_id or (query.startswith('"') and query.endswith('"'))
         plan = None
+        pending_candidates = None
+        review_state = 'not_required'
         if literal:
             result = service.search(query, site=request.site, all_sites=request.all_sites, top_k=request.top_k,
                                     filters=request.filters.model_dump(mode='json'), mode=request.mode, offset=request.offset)
@@ -415,7 +422,15 @@ class SearchIntelligence:
             for key in selected:
                 rows[key]['rank_fusion'] = True  # UI shows rank/evidence rather than a pseudo-confidence percentage.
             if variants:
-                reviewed, review_usage = self.review_candidates(service, query, [rows[key] for key in selected], request.top_k) if selected and plan['origin'] == 'llm' else ([rows[key] for key in selected[:request.top_k]], None)
+                candidates = [rows[key] for key in selected]
+                if selected and plan['origin'] == 'llm' and request.progressive:
+                    reviewed, review_usage = candidates[:request.top_k], None
+                    pending_candidates = candidates
+                    review_state = 'pending'
+                elif selected and plan['origin'] == 'llm':
+                    reviewed, review_usage, review_state = self.review_candidates(service, query, candidates, request.top_k)
+                else:
+                    reviewed, review_usage = candidates[:request.top_k], None
                 result = {**variants[0], 'results': reviewed, 'result_count': len(reviewed),
                       'limit': request.top_k, 'query': query,
                       'ranking_explanation': 'Original and clarified queries retrieve independently within the same hard filters. '
@@ -429,6 +444,13 @@ class SearchIntelligence:
             result['interpretation'] = None
         result['submitted_criteria'] = request.model_dump(mode='json')
         result['assistant_usage'] = plan['usage'] if plan else None
+        result['review_state'] = review_state
+        result['cache_hit'] = False
+        if pending_candidates is not None:
+            return self.performance.prepare(service, request, result, pending_candidates)
+        return self.retain_result(service, result)
+
+    def retain_result(self, service, result):
         if result['results']:
             search_id = uuid4().hex
             signature = hashlib.sha256(json.dumps([VERSION, self.authority(service), result['query'], result['site'],
