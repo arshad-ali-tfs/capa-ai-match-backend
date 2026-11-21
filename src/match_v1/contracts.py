@@ -49,6 +49,7 @@ class SearchRequest(BaseModel):
     mode: Literal['auto', 'keyword', 'exact', 'semantic'] = 'auto'
     offset: int = Field(default=0, ge=0, le=1000000)
     assist: bool = False
+    progressive: bool = False
 
     @property
     def use_explorer(self):
@@ -57,6 +58,8 @@ class SearchRequest(BaseModel):
 
     @model_validator(mode='after')
     def require_one_scope(self):
+        if self.progressive and not self.assist:
+            raise ValueError('Progressive search requires assisted search.')
         if self.all_sites == (self.site is not None):
             raise ValueError('Choose a site or all_sites=true, but not both.')
         return self
