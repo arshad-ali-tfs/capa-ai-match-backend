@@ -27,12 +27,11 @@ class FakeLLM:
         if name == 'match_relevance':
             return {'ranked':[{'id':row['id'],'relationship':'related','evidence':row['title'] or row['description'][:120]} for row in data['records'][:data['maximum_results']]]}, {'input_tokens':30,'output_tokens':20}
         if name == 'match_grounding':
-            return {'supported_lines':[0,1],'evidence':[{'line':index,'id':data['records'][0]['id'],'field':'RECORD_NAME','quote':data['records'][0]['title']} for index in [0,1]]},{'input_tokens':20,'output_tokens':20}
+            return {'supported_lines':[0,1],'answer_line':None,'evidence':[{'line':index,'passage_id':next(proof['passage_id'] for proof in data['evidence_catalog'] if proof['record_id']==data['records'][0]['id'] and proof['field']=='RECORD_NAME')} for index in [0,1]]},{'input_tokens':20,'output_tokens':20}
         refs = ['UNKNOWN'] if self.invalid_refs else [data['records'][0]['id']]
         return {'lines': [{'text': text, 'references': refs} for text in [
             'The selected historical record describes a calibration event.',
-            'The supplied evidence does not establish patient impact.',
-            'No linked CAPA evidence was supplied for the reviewed record.']]}, {'input_tokens': 40, 'output_tokens': 30}
+            'The supplied evidence does not establish patient impact.']]}, {'input_tokens': 40, 'output_tokens': 30}
 
 
 def request(query='find calibration failures', **kwargs):
@@ -156,7 +155,9 @@ def test_unknown_citations_are_rejected_instead_of_shown_as_evidence():
     llm=FakeLLM();llm.invalid_refs=True
     helper=SearchIntelligence(llm);service=explorer()
     result=helper.search(service,request('101'))
-    with pytest.raises(AssistanceUnavailable):helper.overview(service,result['summary_id'])
+    summary=helper.overview(service,result['summary_id'])
+    assert summary['verification_status']=='unavailable' and not summary['citations']
+    assert summary['verification_attempts']['draft']==3
 
 
 def test_concurrent_overview_requests_share_one_generation_and_grounding_check():
@@ -189,7 +190,7 @@ def test_long_overview_gets_one_bounded_evidence_and_length_revision():
     def long_first(name,instructions,data,*args):
         if name=='match_overview' and 'draft_to_check' not in data:
             return {'lines':[{'text':'Fictional retained source calibration evidence ' * 18 + '.', 'references':['101']} for _ in range(3)]},{'input_tokens':10,'output_tokens':20}
-        if name=='match_overview':assert 'at most 65 words TOTAL' in instructions
+        if name=='match_overview':assert 'at most 40 words TOTAL' in instructions
         return original(name,instructions,data,*args)
     llm.invoke=long_first
     token=helper.search(service,request('101'))['summary_id']
