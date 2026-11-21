@@ -157,7 +157,7 @@ def test_unknown_citations_are_rejected_instead_of_shown_as_evidence():
     result=helper.search(service,request('101'))
     summary=helper.overview(service,result['summary_id'])
     assert summary['verification_status']=='unavailable' and not summary['citations']
-    assert summary['verification_attempts']['draft']==2
+    assert summary['verification_attempts']['draft']==3
 
 
 def test_concurrent_overview_requests_share_one_verified_pipeline():

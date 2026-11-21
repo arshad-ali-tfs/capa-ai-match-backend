@@ -149,10 +149,13 @@ class StructuredLLM:
             LOG.warning('MATCH AI request unavailable (HTTP %s).', error.code)
             error.close()
             raise AssistanceUnavailable('AI assistance is temporarily unavailable.', reason=reason, retryable=transient) from None
-        except (URLError, OSError, ValueError, TypeError, KeyError) as error:
-            # Neither upstream bodies nor source prompts/credentials enter logs/errors.
+        except (URLError, OSError) as error:
             LOG.warning('MATCH AI request unavailable (%s).', type(error).__name__)
             raise AssistanceUnavailable('AI assistance is temporarily unavailable.') from None
+        except (ValueError, TypeError, KeyError) as error:
+            # Neither upstream bodies nor source prompts/credentials enter logs/errors.
+            LOG.warning('MATCH AI request unavailable (%s).', type(error).__name__)
+            raise AssistanceUnavailable('AI assistance is temporarily unavailable.', reason='invalid_model_response') from None
 
 
 class BoundedCache:

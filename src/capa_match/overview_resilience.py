@@ -34,6 +34,8 @@ class OverviewSession:
         self.llm = llm
         self.deadline = monotonic() + TIME_BUDGET_SECONDS
         self.attempts = {'draft': 0, 'grounding': 0}
+        self.provider_retries = 0
+        self.extra_retry_used = False
         self.usage = {'input_tokens': 0, 'output_tokens': 0}
         self.last_reason = None
 
@@ -41,14 +43,17 @@ class OverviewSession:
         from .intelligence import AssistanceUnavailable
         reason = None
         draft = None
-        for attempt in range(MAX_ATTEMPTS):
+        validation_failures = 0
+        while validation_failures < MAX_ATTEMPTS:
             if monotonic() >= self.deadline:
                 self.last_reason = 'time_budget'
                 raise OverviewUnavailable('time_budget')
+            if sum(self.attempts.values()) >= 5 or self.attempts[stage] >= 3:
+                raise OverviewUnavailable(reason or 'verification_failed')
             self.attempts[stage] += 1
             request = data
             instructions = prompt
-            if attempt:
+            if validation_failures:
                 instructions += ('\nRepair the previous response using exactly the same evidence and constraints. '
                                  'Do not invent support or turn a proposed action into an implemented one. '
                                  'Use only the references array for deviation citations. '
@@ -70,24 +75,35 @@ class OverviewSession:
                 return validate(generated)
             except InvalidModelOutput as error:
                 reason = str(error)
+                validation_failures += 1
             except AssistanceUnavailable as error:
                 reason = getattr(error, 'reason', 'provider_unavailable')
                 if not getattr(error, 'retryable', True):
                     self.last_reason = reason
                     raise OverviewUnavailable(reason) from None
+                if reason == 'invalid_model_response':
+                    validation_failures += 1
+                elif self.provider_retries < 1 and not self.extra_retry_used:
+                    self.provider_retries += 1
+                    self.extra_retry_used = True
+                else:
+                    self.last_reason = reason
+                    raise OverviewUnavailable(reason) from None
             finally:
                 _deadline.reset(token)
             self.last_reason = reason
-            LOG.info('MATCH overview retry stage=%s attempt=%s', stage, attempt + 1)
-        raise OverviewUnavailable('verification_failed' if reason not in {
-            'provider_unavailable', 'rate_limited', 'time_budget', 'configuration', 'request_rejected'
-        } else reason)
+            LOG.info('MATCH overview retry stage=%s attempt=%s reason=%s', stage, self.attempts[stage], reason)
+            if validation_failures >= MAX_ATTEMPTS and not self.extra_retry_used:
+                self.extra_retry_used = True
+                validation_failures -= 1
+        raise OverviewUnavailable(reason or 'verification_failed')
 
     def metadata(self, outcome, reason=None):
         attempts = dict(self.attempts)
         return {'verification_status': outcome,
                 'verification_attempts': attempts,
                 'verification_retries': sum(max(0, count - 1) for count in attempts.values()),
+                'verification_provider_retries': self.provider_retries,
                 'verification_reason': reason,
                 'usage': {**self.usage, 'grounding_checked': attempts['grounding'] > 0,
                           **({'revision_pass': True} if attempts['draft'] > 1 else {})}}
