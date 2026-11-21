@@ -68,11 +68,44 @@ def test_missing_punctuation_and_duplicate_inline_citations_are_formatting_not_p
     assert value[0]['text']=='The analyst corrected the settings.' and lines[0]['text'].endswith('[1]')
 
 
-def test_inline_citation_outside_verified_reference_list_requires_repair():
-    from capa_match.overview_resilience import InvalidModelOutput
+def test_inline_citations_are_removed_before_independent_source_attribution():
     lines=[{'text':'The analyst corrected the settings [1, 2].','references':['1']},
            {'text':'The source reported a setting error.','references':['1']}]
-    with pytest.raises(InvalidModelOutput,match='inline_citation_mismatch'):draft_lines({'lines':lines},['1','2'])
+    assert draft_lines({'lines':lines},['1','2'])[0]['text']=='The analyst corrected the settings.'
+
+
+def test_unknown_inline_sources_are_never_treated_as_citations():
+    from capa_match.overview_resilience import InvalidModelOutput
+    lines=[{'text':'The analyst corrected the settings [1, UNKNOWN].','references':['1']},
+           {'text':'The source reported a setting error.','references':['1']}]
+    with pytest.raises(InvalidModelOutput,match='inline_citation_mismatch'):draft_lines({'lines':lines},['1'])
+
+
+def test_verifier_selects_immutable_source_passages_instead_of_generating_quotes():
+    llm=AnswerLLM();value=run('What actions were taken?',llm)
+    payload=llm.calls[-1][2];catalog=payload['evidence_catalog']
+    assert any(proof['quote']==ACTION for proof in catalog)
+    evidence_schema=llm.calls[-1][3]['properties']['evidence']['items']['properties']
+    assert set(evidence_schema)=={'line','passage_id'} and 'quote' not in evidence_schema
+    for group in value['citations']:
+        for proof in group:assert SOURCE[proof['start']:proof['end']]==proof['quote']
+
+
+def test_independent_verifier_repairs_draft_attribution_using_actual_supporting_source():
+    from capa_match.answering import build_summary
+    from test_watchlist import History,record
+    class Reattributed(AnswerLLM):
+        def invoke(self,name,instructions,data,schema,max_tokens):
+            if name!='match_grounding':return super().invoke(name,instructions,data,schema,max_tokens)
+            self.calls.append((name,instructions,data,schema))
+            selected=next(proof for proof in data['evidence_catalog'] if proof['record_id']=='2' and proof['quote']==ACTION)
+            cause=next(proof for proof in data['evidence_catalog'] if proof['record_id']=='2' and proof['quote'].startswith('The investigation attributed'))
+            return {'supported_lines':[0,1],'answer_line':0,'evidence':[{'line':0,'passage_id':selected['passage_id']},{'line':1,'passage_id':cause['passage_id']}]},{}
+    service=History([record('1','The source does not document the requested correction.'),record('2',SOURCE)])
+    result={'query':'What actions were taken?','site':'LAB','results':[{'pr_id':'1','site':'LAB'},{'pr_id':'2','site':'LAB'}]}
+    value=build_summary(service,result,Reattributed(),'f'*32)
+    assert value['answer_status']=='answered' and value['lines'][0]['references']==['2']
+    assert value['citations'][0][0]['record_id']=='2' and value['citations'][0][0]['quote']==ACTION
 
 
 def test_invented_supporting_quote_is_retried_once_and_never_published_as_an_answer():
