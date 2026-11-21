@@ -195,8 +195,8 @@ def test_index_archive_cannot_write_outside_its_staging_directory(tmp_path, kind
     assert not list(tmp_path.glob('seed-*'))
 
 
-@pytest.mark.parametrize('compatible', [True, False])
-def test_bundled_index_requires_a_validated_source_binding(builder, compatible, monkeypatch):
+@pytest.mark.parametrize('compatible,narrow_scope', [(True,False),(False,False),(True,True)])
+def test_bundled_index_requires_a_validated_source_binding(builder, compatible, narrow_scope, monkeypatch):
     run, calls, _, root = builder
     first = run()
     index_root = Path(first['MATCH_INDEX_DIR'])
@@ -206,13 +206,13 @@ def test_bundled_index_requires_a_validated_source_binding(builder, compatible, 
         stream.add(index_root / first['generation'], arcname=first['generation'])
     seed = dict(path='data/index.tar.gz', contract=setup.index_contract(root),
                 policy=dict(snapshot='legacy-workbook', model=core.DEFAULT_MODEL, revision='f' * 40,
-                            runtime='onnx-fp32', division='DPD', limit=2, chunk_size=500, chunk_overlap=50,
+                            runtime='onnx-fp32', division='DPD' if narrow_scope else '', status_scope='completed' if narrow_scope else 'all', limit=2, chunk_size=500, chunk_overlap=50,
                             text_fields=['DETAILED_DESCRIPTION', 'CONCLUSION']),
                 equivalent_snapshot_ids=[first['snapshot_id']] if compatible else ['another-source'])
     count = len(calls)
     prepared = run(limit=2, seed=seed)
     assert prepared['snapshot_id'] == first['snapshot_id']
-    assert (len(calls) == count) is compatible
+    assert (len(calls) == count) is (compatible and not narrow_scope)
     assert index.load_index_metadata(Path(prepared['MATCH_INDEX_DIR']))[0]['source_snapshot_id'] == first['snapshot_id']
 
 

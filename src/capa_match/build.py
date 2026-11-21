@@ -12,7 +12,8 @@ def main(argv=None, *, use_dotenv=True):
     parser.add_argument('--rebuild', '--replace', dest='rebuild', action='store_true', help='Publish a new generation while retaining previous files')
     parser.add_argument('--gtw', type=Path, help='Optional CSV identical to the configured snapshot export; import new data with bootstrap.py first')
     parser.add_argument('--index-dir', type=Path, help='Defaults to data/match-<snapshot ID>')
-    parser.add_argument('--division', help='Default DPD; empty string includes all divisions')
+    parser.add_argument('--division', help='Default all divisions; use DPD, DSD, CTD or Global to restrict')
+    parser.add_argument('--status-scope', choices=('completed','ongoing','all'), help='Default all statuses; completed and cancelled visibility is controlled at search time')
     parser.add_argument('--site', help='Optionally index only this exact site')
     parser.add_argument('--limit', type=int, help='Platform default 0 means all eligible deviations')
     parser.add_argument('--model', help='Checkpoint name or local path; default MATCH_MODEL_NAME or base MPNet')
@@ -65,7 +66,7 @@ def main(argv=None, *, use_dotenv=True):
         parser.error(str(error))
     target = args.index_dir.resolve() if args.index_dir else Path(config['CAPA_DATA_DIR']) / ('match-' + metadata['snapshot_id'])
     settings_requested = args.mock_embeddings or any(getattr(args, name) is not None for name in (
-        'division', 'site', 'limit', 'model', 'batch_size', 'runtime', 'chunk_size', 'chunk_overlap', 'text_field'))
+        'division', 'status_scope', 'site', 'limit', 'model', 'batch_size', 'runtime', 'chunk_size', 'chunk_overlap', 'text_field'))
 
     def activate(manifest):
         if not use_dotenv:
@@ -87,7 +88,8 @@ def main(argv=None, *, use_dotenv=True):
         return
     runtime = args.runtime or 'onnx-fp32'
     model_name = args.model or config.get('MATCH_MODEL_NAME') or DEFAULT_MODEL
-    records, capas, stats = load_gtw(source, division=args.division if args.division is not None else 'DPD',
+    records, capas, stats = load_gtw(source, division=args.division if args.division is not None else config.get('MATCH_INDEX_DIVISION',''),
+                                    status_scope=args.status_scope or config.get('MATCH_INDEX_STATUS_SCOPE','all'),
                                     site=args.site, limit=limit,
                                     text_fields=tuple(args.text_field or ('DETAILED_DESCRIPTION', 'CONCLUSION')))
     stats = {**stats, 'source_snapshot_id': metadata['snapshot_id']}

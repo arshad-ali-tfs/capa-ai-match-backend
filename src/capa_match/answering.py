@@ -3,8 +3,9 @@ from copy import deepcopy
 import re
 from .evidence import passages, locate_quote, coverage
 from .retained import enriched, original_fields
+from match_v1.scope import workflow_state, status_counts
 
-VERSION='match-direct-answer-v1'
+VERSION='match-direct-answer-division-status-v2'
 
 
 def question_kind(query):
@@ -31,6 +32,9 @@ Sentence two supplies the key supporting finding or material limitation. Sentenc
 For a keyword search rather than a question, start with the most relevant historical finding/pattern.
 Prefer the supplied original source_passages, including investigation, conclusion and corrections/action-plan text.
 Planned action is not completed action; closed deviation is not completed CAPA; completed CAPA is not effectiveness.
+Every record includes its workflow status. Ongoing investigation findings are provisional, even when their narrative sounds definitive.
+Cancelled deviations are withdrawn/cancelled records, not completed investigation precedents. Do not use them to establish a confirmed cause, completed action or outcome.
+Preserve source-reported uncertainty in completed cases too; closure alone does not verify a cause. Distinguish divisions when comparing cases.
 Only retained linked_capas establish CAPA links/status. Missing links do not establish that no CAPA exists or was needed.
 The evidence covers only reviewed returned candidates, not the whole population. Never invent rates, frequency rankings or a recurrence trend.
 Keep equipment IDs/dates only when needed to answer; omit incidental batch numbers and long product names.
@@ -43,6 +47,7 @@ Return the indexes of fully supported sentences, with a short VERBATIM supportin
 For a real question, answer_line must identify the supported sentence that directly answers the question, or null if neither does.
 A sentence listing similar historical cases does not answer what actions were taken, why it occurred, or what the outcome was.
 Preserve suspected versus confirmed cause, planned versus implemented action, negation, chronology and the question's conditions.
+Ongoing cases must be qualified as provisional. Cancelled cases cannot establish confirmed causes, completed actions or outcomes.
 Reject inferred recurring/shared mechanisms from matching assets; reject 'after maintenance' when repair followed the fault.
 Reject effectiveness claims from closed statuses and population rates/rankings from returned candidates.
 Source narratives may document actions without a retained CAPA link. Unavailable attachments cannot be reviewed.
@@ -71,6 +76,7 @@ def build_summary(service,result,llm,search_id):
     for row,source in zip(result['results'],sources):
         fields=original_fields(source)
         records.append({'id':row['pr_id'],'title':source.get('record_name',''),'site':row['site'],
+            'division':source.get('division',''),'status':source.get('status',''),'workflow_state':workflow_state(source.get('status')),
             'opened':source.get('date_opened',''),'closed':source.get('date_closed',''),'criticality':source.get('criticality',''),
             'matched_field':row.get('matched_field'),'matched_excerpt':row.get('matched_excerpt',''),
             'description_excerpt':fields.get('DETAILED_DESCRIPTION','')[:600],'conclusion_excerpt':fields.get('CONCLUSION','')[:800],
@@ -146,4 +152,5 @@ def build_summary(service,result,llm,search_id):
         'usage':usage,'cached':False,'citations':[value[1] for value in ordered] if any(value[1] for value in ordered) else [],
         'is_question':question,'question_intent':intent,'answer_status':'answered' if answered else 'not_established' if question else 'overview',
         'answer_version':VERSION,'support_check':{'model_supported_sentences':len(supported),'verified_sentences':len(verified),'provided_quotes':len(quotes),'direct_answer_verified':bool(answered)},
+        'reviewed_status_counts':status_counts(sources),
         'evidence_coverage':[{'pr_id':source['pr_id'],**coverage(source)} for source in sources]}

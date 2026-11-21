@@ -24,9 +24,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 from match_v1.contracts import SearchFilters
 from match_v1.explorer import identifiers
+from .division_scope import requested_divisions, strip_divisions
+from .provenance import index_generation
 
 LOG = logging.getLogger(__name__)
-VERSION = 'match-assist-v1-direct-answer-v1'
+VERSION = 'match-assist-division-status-stable-v2'
 
 
 class AssistanceUnavailable(RuntimeError):
@@ -234,7 +236,7 @@ class SearchIntelligence:
 
     @staticmethod
     def authority(service):
-        return (service.manifest.get('source_snapshot_id'), tuple(sorted(service.allowed_sites)))
+        return (index_generation(service.manifest), tuple(sorted(service.allowed_sites)))
 
     def interpret(self, service, request):
         query = request.query.strip()
@@ -266,6 +268,7 @@ class SearchIntelligence:
         except AssistanceUnavailable:
             pass
         filters = request.filters.model_dump(mode='json')
+        filters['divisions'] = requested_divisions(service,query,filters['divisions'])
         explicit_years = {int(value) for value in re.findall(r'(?<![A-Za-z0-9_./-])(?:19|20|21)\d{2}(?![A-Za-z0-9_./-])', query)}
         relative = bool(re.search(r'\b(this|last|past|previous|current)\s+(?:\d+\s+)?years?\b', query, re.I))
         proposed_years = plan.get('years')
@@ -301,7 +304,7 @@ class SearchIntelligence:
         # Resolve true filter-only requests deterministically; never embed filler.
         stop = set('please show find list browse all any the me us for from in at of on and or historical history deviation deviations record records case cases site year years during opened raised this last past previous current major minor critical with between to through until give get return which what are were have has been only where that occurred reported classification classified as'.split())
         stop.update(re.findall(r'[a-z0-9]+', (site or '').lower()))
-        remaining = [word for word in re.findall(r'[a-z0-9]+', query.lower()) if word not in stop and not word.isdigit()]
+        remaining = [word for word in re.findall(r'[a-z0-9]+', strip_divisions(query).lower()) if word not in stop and not word.isdigit()]
         if not remaining:
             plan['retrieval_query'] = ''
         elif not plan['retrieval_query'].strip():

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from .core import clean_for_index, normalize_pr_id
+from .scope import POLICY_VERSION, workflow_state
 
 
 def _get(row: dict[str, str], key: str) -> str:
@@ -13,14 +14,17 @@ def _get(row: dict[str, str], key: str) -> str:
 
 
 def load_gtw(path: str | Path, *, division: str = 'DPD', limit: int = 200,
-             site: str | None = None, text_fields: tuple[str, ...] = ('DETAILED_DESCRIPTION',)):
-    """Select historical closed-done deviations, link associated CAPAs by IDs.
+             site: str | None = None, text_fields: tuple[str, ...] = ('DETAILED_DESCRIPTION',),
+             status_scope: str = 'completed'):
+    """Select deviations for an explicit division/status policy; retain CAPA links.
 
     `limit=0` means the entire eligible input corpus. No LLM calls.
     Record selection is independent of DR_TYPE (a business rule still to confirm).
     """
     if limit < 0:
         raise ValueError('limit must be >= 0')
+    if status_scope not in {'completed', 'ongoing', 'all'}:
+        raise ValueError('Unknown index status scope')
     if not Path(path).is_file():
         raise FileNotFoundError(path)
     if not text_fields:
@@ -46,7 +50,7 @@ def load_gtw(path: str | Path, *, division: str = 'DPD', limit: int = 200,
                 continue
             if rec_type != 'deviation':
                 continue
-            if _get(row, 'STATUS').casefold() != 'closed - done':
+            if status_scope != 'all' and workflow_state(_get(row, 'STATUS')) != status_scope:
                 continue
             root_type = _get(row, 'ROOT_PARENT_RECORD_TYPE')
             if root_type and root_type.casefold() != 'deviation':
@@ -117,5 +121,7 @@ def load_gtw(path: str | Path, *, division: str = 'DPD', limit: int = 200,
         'division_filter': division,
         'site_filter': site,
         'indexed_fields': list(text_fields),
+        'status_scope': status_scope,
+        'scope_policy_version': POLICY_VERSION,
     }
     return records, capas, stats

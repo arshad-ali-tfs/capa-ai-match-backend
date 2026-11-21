@@ -14,8 +14,9 @@ import numpy as np
 
 from .contracts import SearchFilters
 from .core import split_chunks, unit_rows
+from .scope import accepts_status, status_counts
 
-FIELDS = {'years': None, 'criticalities': 'criticality', 'dr_types': 'dr_type',
+FIELDS = {'divisions': 'division', 'statuses': 'status', 'years': None, 'criticalities': 'criticality', 'dr_types': 'dr_type',
           'departments': 'responsible_department'}
 TITLE_WEIGHT = .30
 CODE = re.compile(r'(?<![A-Za-z0-9])[A-Za-z0-9]+(?:[-_./\u2010-\u2015][A-Za-z0-9]+)*(?![A-Za-z0-9])')
@@ -129,9 +130,11 @@ class MatchExplorer:
         return value
 
     def accepts(self, record, filters, omit=None):
+        if omit != 'workflow' and not accepts_status(record.get('status'), filters['record_scope'], filters['include_cancelled']):
+            return False
         opened = opened_date(record.get('date_opened'))
         for key, field in FIELDS.items():
-            if key == omit or not filters[key]:
+            if key == omit or omit == 'workflow' and key == 'statuses' or not filters[key]:
                 continue
             value = opened.year if key == 'years' and opened else None if key == 'years' else record.get(field, '').strip()
             choices = filters[key]
@@ -167,6 +170,7 @@ class MatchExplorer:
             facets[key] = [{'value': value, 'count': counts[value]} for value in sorted(counts, reverse=key == 'years')]
         return {**scope, 'filters': filters, 'facets': facets, 'scope_record_count': len(records),
                 'eligible_record_count': len(eligible),
+                'status_counts': status_counts(record for record in records if self.accepts(record, filters, omit='workflow')),
                 'missing_opened_dates': sum(opened_date(record.get('date_opened')) is None for record in eligible)}
 
     def best_text(self, record, patterns):
@@ -240,6 +244,7 @@ class MatchExplorer:
                     else 'semantic' if mode == 'semantic' else 'hybrid')
         envelope = {'query': query, **scope, 'filters': filters, 'requested_mode': mode, 'search_mode': resolved,
                     'scope_record_count': len(records), 'eligible_record_count': len(eligible),
+                    'status_counts': status_counts(record for record in records if self.accepts(record, filters, omit='workflow')),
                     'required_identifiers': required_ids, 'identifier_record_count': len(identity_matches) if required_ids else None,
                     'offset': offset, 'limit': top_k, 'model_name': self.service.manifest['model_name'],
                     'mock_embeddings': self.service.manifest['embedding_backend'] != 'MPNet'}

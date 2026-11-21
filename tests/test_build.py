@@ -86,7 +86,7 @@ def test_mock_build_is_offline_and_keeps_platform_defaults(wrapper, capsys):
     module.main(['--mock-embeddings'])
     target = Path(dotenv_values(module.ROOT / '.env')['MATCH_INDEX_DIR'])
     manifest, records, _, _ = index.load_index_metadata(target)
-    assert len(records) == 3
+    assert len(records) == 4
     assert manifest['text_fields'] == ['DETAILED_DESCRIPTION', 'CONCLUSION']
     assert manifest['embedding_backend'] == 'MOCK_UNFIT_FOR_REAL_SEARCH'
     assert manifest['embedding_runtime'] == 'mock'
