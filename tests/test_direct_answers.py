@@ -15,13 +15,13 @@ class AnswerLLM:
         self.calls.append((name,instructions,data,schema))
         if name=='match_overview':
             lines=[{'text':'The analyst corrected the needle-wash settings and repeated system suitability successfully.','references':['1']},
-                   {'text':'Investigators attributed the failure to an incorrect needle-wash setting.','references':['1']},
-                   {'text':'No retained linked CAPA evidence was supplied.','references':['1']}]
+                   {'text':'Investigators attributed the failure to an incorrect needle-wash setting.','references':['1']}]
             if self.bad_refs:lines[0]['references']=['INVENTED']
             return {'lines':lines},{'input_tokens':20,'output_tokens':20}
+        def selected(quote):return next(proof['passage_id'] for proof in data['evidence_catalog'] if proof['quote']==quote)
         return {'supported_lines':[] if self.no_support else [0,1],'answer_line':None if self.no_support else self.answer_line,
-                'evidence':[{'line':0,'id':'1','field':'DETAILED_DESCRIPTION','quote':'An invented improvement was implemented.' if self.bad_quote else ACTION},
-                            {'line':1,'id':'1','field':'DETAILED_DESCRIPTION','quote':CAUSE}]},{'input_tokens':20,'output_tokens':20}
+                'evidence':[] if self.no_support else [{'line':0,'passage_id':'INVENTED' if self.bad_quote else selected(ACTION)},
+                                                     {'line':1,'passage_id':selected(CAUSE)}]},{'input_tokens':20,'output_tokens':20}
 
 
 def run(query,llm=None):
@@ -59,12 +59,16 @@ def test_invented_quote_cannot_turn_a_plausible_answer_into_verified_evidence():
     summary=run('What actions fixed the issue?',llm)
     assert summary['answer_status']=='not_established'
     assert 'corrected the needle-wash' not in str(summary['lines'])
-    assert summary['support_check']['verified_sentences']==1
+    assert summary['verification_status']=='unavailable'
+    assert summary['verification_attempts']['grounding']==3
 
 
 def test_unknown_ids_are_rejected_before_publishing_an_answer():
     llm=AnswerLLM();llm.bad_refs=True
-    with pytest.raises(AssistanceUnavailable):run('What was done?',llm)
+    summary=run('What was done?',llm)
+    assert summary['verification_status']=='unavailable' and not summary['citations']
+    assert summary['verification_attempts']=={'draft':3,'grounding':0}
+    assert 'INVENTED' not in str(summary)
 
 
 def test_keyword_search_retains_overview_mode_and_a_three_line_contract():
