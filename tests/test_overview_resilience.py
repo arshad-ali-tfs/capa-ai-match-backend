@@ -201,3 +201,52 @@ def test_unused_transport_recovery_can_repair_a_second_format_failure_without_ex
     value=run('What actions were taken?',llm)
     assert value['verification_status']=='verified' and value['answer_status']=='answered'
     assert value['verification_attempts']=={'draft':3,'grounding':2} and len(llm.calls)==5
+
+
+@pytest.mark.parametrize('claim',[
+    'No corrective maintenance was performed.',
+    'Corrective maintenance was not performed.',
+    'The analysis ran without a maintenance intervention.',
+    "The analyst didn't perform corrective maintenance.",
+])
+def test_verifier_cannot_establish_a_negative_fact_from_a_positive_action_quote(claim):
+    class UnwarrantedNegative(AnswerLLM):
+        def invoke(self,name,instructions,data,schema,max_tokens):
+            generated,usage=super().invoke(name,instructions,data,schema,max_tokens)
+            if name=='match_overview':generated['lines'][0]['text']=claim
+            return generated,usage
+    llm=UnwarrantedNegative();value=run('Was corrective maintenance performed?',llm)
+    assert value['verification_status']=='insufficient_evidence' and value['answer_status']=='not_established'
+    assert claim not in str(value['lines']) and not value['support_check']['direct_answer_verified']
+    assert len(llm.calls)==2  # Do not keep asking the verifier to agree.
+
+
+def test_source_explicitly_denied_action_can_be_answered_with_its_original_negative_quote():
+    from capa_match.answering import build_summary
+    from test_watchlist import History,record
+    claim='No corrective maintenance was performed.'
+    class DocumentedNegative(AnswerLLM):
+        def invoke(self,name,instructions,data,schema,max_tokens):
+            generated,usage=super().invoke(name,instructions,data,schema,max_tokens)
+            if name=='match_overview':generated['lines'][0]['text']=claim
+            else:
+                negative=next(proof for proof in data['evidence_catalog'] if proof['quote']==claim)
+                generated['evidence'][0]={'line':0,'passage_id':negative['passage_id']}
+            return generated,usage
+    service=History([record('1',SOURCE+' '+claim)])
+    result={'query':'Was corrective maintenance performed?','site':'LAB','results':[{'pr_id':'1','site':'LAB'}]}
+    value=build_summary(service,result,DocumentedNegative(),'f'*32)
+    assert value['answer_status']=='answered' and value['verification_status']=='verified'
+    assert value['lines'][0]['text']==claim and value['citations'][0][0]['quote']==claim
+
+
+def test_unsupported_secondary_negative_claim_does_not_hide_the_verified_direct_answer():
+    class UnsupportedDetail(AnswerLLM):
+        def invoke(self,name,instructions,data,schema,max_tokens):
+            generated,usage=super().invoke(name,instructions,data,schema,max_tokens)
+            if name=='match_overview':generated['lines'][1]['text']='No corrective maintenance was performed.'
+            return generated,usage
+    value=run('What actions were taken?',UnsupportedDetail())
+    assert value['verification_status']=='verified' and value['answer_status']=='answered'
+    assert value['citations'][0][0]['quote']==ACTION
+    assert 'No corrective maintenance' not in str(value['lines'])
