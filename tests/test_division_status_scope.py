@@ -79,10 +79,13 @@ def test_explicit_division_text_is_resolved_without_overriding_selected_filters_
     assert requested_divisions(service,'show DPD and DSD deviations',[])==['DPD','DSD']
     assert requested_divisions(service,'show all except DPD',[])==['CTD','DSD','Global']
     assert requested_divisions(service,'all divisions except DPD and DSD',[])==['CTD','Global']
+    assert requested_divisions(service,'all divisions except Global',[])==['CTD','DPD','DSD']
     assert requested_divisions(service,'DPD equipment issues',['CTD'])==['CTD']
     assert requested_divisions(service,'equipment DPD-001 failed',[])==[]
     assert requested_divisions(service,'global calibration issues',[])==[]
     assert requested_divisions(service,'Global division calibration issues',[])==['Global']
+    service.records={key:row for key,row in service.records.items() if row['division']=='DPD'}
+    assert requested_divisions(service,'show DSD deviations',[])==['DSD']
 
 def test_division_only_assisted_browse_uses_filters_without_embedding_filler():
     from test_intelligence import FakeLLM
