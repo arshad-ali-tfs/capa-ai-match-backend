@@ -4,8 +4,9 @@ import re
 from .evidence import passages, locate_quote, coverage
 from .retained import enriched, original_fields
 from match_v1.scope import workflow_state, status_counts
+from .overview_resilience import InvalidModelOutput, OverviewSession, OverviewUnavailable
 
-VERSION='match-direct-answer-division-status-v2'
+VERSION='match-direct-answer-automatic-verification-v3'
 
 
 def question_kind(query):
@@ -20,7 +21,8 @@ def question_kind(query):
 
 
 ANSWER_PROMPT="""Write a concise pharmaceutical deviation evidence summary using only the supplied records.
-Return exactly THREE short sentences, with deviation IDs in references, at most 85 words total.
+Return exactly TWO short sentences, with deviation IDs ONLY in references, at most 55 words total.
+Do not repeat deviation IDs or bracketed citation lists inside the sentence text.
 When is_question is true, sentence ONE MUST DIRECTLY ANSWER the user's actual question.
 For what/how actions questions, name the documented correction/control change and preserve planned versus performed status.
 For why questions, state the source-reported cause with its suspected/probable/confirmed qualification.
@@ -28,7 +30,7 @@ For which equipment questions, identify the documented asset if available. For i
 For chronology questions, the user's premise is not evidence: distinguish maintenance after a fault from failure after maintenance.
 When the question cannot be answered from these excerpts, say exactly what is not established in sentence one.
 Do not substitute a generic statement that the cases are similar for an answer. Do not add unrequested impact boilerplate.
-Sentence two supplies the key supporting finding or material limitation. Sentence three describes linked CAPA evidence or its gap.
+Sentence two supplies the key supporting finding or material limitation. The server adds the verified CAPA status separately.
 For a keyword search rather than a question, start with the most relevant historical finding/pattern.
 Prefer the supplied original source_passages, including investigation, conclusion and corrections/action-plan text.
 Planned action is not completed action; closed deviation is not completed CAPA; completed CAPA is not effectiveness.
@@ -67,8 +69,92 @@ def gap_line(intent,refs):
     return {'text':text,'references':refs}
 
 
+def draft_lines(generated, ids):
+    if not isinstance(generated, dict) or set(generated) != {'lines'}:
+        raise InvalidModelOutput('draft_shape')
+    values = generated['lines']
+    if not isinstance(values, list) or len(values) != 2:
+        raise InvalidModelOutput('draft_sentence_count')
+    lines = []
+    for value in values:
+        if not isinstance(value, dict) or set(value) != {'text', 'references'} or not isinstance(value['text'], str):
+            raise InvalidModelOutput('draft_shape')
+        refs = value['references']
+        if (not isinstance(refs, list) or not 1 <= len(refs) <= 3
+                or any(not isinstance(ref, str) or ref not in ids for ref in refs)):
+            raise InvalidModelOutput('draft_citations')
+        refs = list(dict.fromkeys(refs))
+        text = re.sub(r'\s+', ' ', value['text']).strip()
+        # Citation chips use the independently checked reference list. Never
+        # leave a different, unverified list embedded in the generated prose.
+        for match in list(re.finditer(r'\[([A-Za-z0-9_.,;\s-]+)\]', text)):
+            inline = [item for item in re.split(r'[,;\s]+', match[1].strip()) if item]
+            if any(item in ids for item in inline):
+                if any(item not in refs for item in inline):
+                    raise InvalidModelOutput('inline_citation_mismatch')
+                text = text.replace(match[0], '')
+        text = re.sub(r'\s+([.,;:!?])', r'\1', re.sub(r'\s+', ' ', text)).strip()
+        # Missing terminal punctuation is formatting, not missing evidence.
+        if text and not re.search(r'''[.!?]["'\u2019\u201d)\]]*$''', text):
+            text += '.'
+        if not 10 <= len(text) <= 420:
+            raise InvalidModelOutput('draft_length')
+        lines.append({'text': text, 'references': refs})
+    if sum(len(line['text'].split()) for line in lines) > 65:
+        raise InvalidModelOutput('draft_length')
+    return lines
+
+
+def checked_evidence(generated, lines, sources, fields):
+    if not isinstance(generated, dict) or set(generated) != {'supported_lines', 'answer_line', 'evidence'}:
+        raise InvalidModelOutput('grounding_shape')
+    supported, answer, quotes = generated['supported_lines'], generated['answer_line'], generated['evidence']
+    if (not isinstance(supported, list) or len(supported) > 2
+            or any(type(index) is not int or index not in {0, 1} for index in supported)
+            or len(set(supported)) != len(supported)
+            or answer is not None and (type(answer) is not int or answer not in supported)
+            or not isinstance(quotes, list) or len(quotes) > 12):
+        raise InvalidModelOutput('grounding_shape')
+    by_id = {source['pr_id']: source for source in sources}
+    found = {index: set() for index in supported}
+    for proof in quotes:
+        if (not isinstance(proof, dict) or set(proof) != {'line', 'id', 'field', 'quote'}
+                or type(proof['line']) is not int or proof['line'] not in {0, 1}
+                or not isinstance(proof['id'], str) or proof['id'] not in by_id
+                or not isinstance(proof['field'], str) or proof['field'] not in fields
+                or not isinstance(proof['quote'], str) or not 1 <= len(proof['quote']) <= 400):
+            raise InvalidModelOutput('grounding_shape')
+        index = proof['line']
+        if index not in supported:
+            continue
+        if proof['id'] not in lines[index]['references'] or not locate_quote(by_id[proof['id']], proof['quote'], proof['field']):
+            raise InvalidModelOutput('source_quote_mismatch')
+        found[index].add(proof['id'])
+    if any(found[index] != set(lines[index]['references']) for index in supported):
+        raise InvalidModelOutput('missing_source_support')
+    return generated
+
+
+def unavailable_summary(service, result, sources, session, search_id, question, intent, reason):
+    from .intelligence import verified_capa_line
+    ids = [source['pr_id'] for source in sources]
+    refs = ids[:3]
+    return {'search_id': search_id, 'source_snapshot_id': result.get('source_snapshot_id', service.manifest.get('source_snapshot_id')),
+            'lines': [
+                {'text': 'An AI answer could not be verified right now; the source results remain available.', 'references': refs},
+                {'text': 'This does not establish that the records lack an answer. Review the retained source evidence before drawing a conclusion.', 'references': refs},
+                verified_capa_line(sources)],
+            'reviewed_ids': ids, 'returned_count': len(result['results']), 'cached': False, 'citations': [],
+            'is_question': question, 'question_intent': intent,
+            'answer_status': 'not_established' if question else 'overview', 'answer_version': VERSION,
+            'support_check': {'model_supported_sentences': 0, 'verified_sentences': 0, 'provided_quotes': 0, 'direct_answer_verified': False},
+            'reviewed_status_counts': status_counts(sources),
+            'evidence_coverage': [{'pr_id': source['pr_id'], **coverage(source)} for source in sources],
+            **session.metadata('unavailable', reason)}
+
+
 def build_summary(service,result,llm,search_id):
-    from .intelligence import AssistanceUnavailable, OVERVIEW_SCHEMA, verified_capa_line
+    from .intelligence import OVERVIEW_SCHEMA, verified_capa_line
     question,intent=question_kind(result['query'])
     sources=[enriched(service,service.record(row['pr_id'],row['site'])) for row in result['results'][:6]]
     if not sources:raise KeyError('No returned evidence to summarize.')
@@ -85,31 +171,30 @@ def build_summary(service,result,llm,search_id):
             'evidence_coverage':coverage(source)})
     ids=[row['id'] for row in records]
     schema=deepcopy(OVERVIEW_SCHEMA)
+    schema['properties']['lines'].update(minItems=2, maxItems=2)
+    schema['properties']['lines']['items']['properties']['text'].update(minLength=10, maxLength=420)
     schema['properties']['lines']['items']['properties']['references']['items']['enum']=ids
     context={'query':result['query'],'is_question':question,'question_intent':intent,'scope':result['site'],
         'filters':result.get('filters'),'returned_count':len(result['results']),'records':records,'evidence_is_excerpted':True,
         'verified_capa_status':verified_capa_line(sources)['text']}
-    generated,usage=llm.invoke('match_overview',ANSWER_PROMPT,context,schema,900)
-    lines=generated.get('lines')
-    if isinstance(lines,list) and all(isinstance(line,dict) and isinstance(line.get('text'),str) for line in lines) and sum(len(line['text'].split()) for line in lines)>85:
-        generated,extra=llm.invoke('match_overview',ANSWER_PROMPT+'\nRewrite the draft in exactly three sentences, at most 65 words TOTAL. Keep the direct answer and all evidence qualifications.',{**context,'draft_to_check':lines},schema,700)
-        usage={**usage,'input_tokens':usage.get('input_tokens',0)+extra.get('input_tokens',0),'output_tokens':usage.get('output_tokens',0)+extra.get('output_tokens',0),'revision_pass':True}
-        lines=generated.get('lines')
-    if not isinstance(lines,list) or not 3<=len(lines)<=4:raise AssistanceUnavailable('The evidence answer could not be verified.')
-    for line in lines:
-        if not isinstance(line,dict) or set(line)!={'text','references'} or not isinstance(line['text'],str) or not 10<=len(line['text'])<=420 or line['text'].rstrip()[-1] not in '.!?' or not isinstance(line['references'],list) or not 1<=len(line['references'])<=3 or any(ref not in ids for ref in line['references']):
-            raise AssistanceUnavailable('The evidence answer could not be verified.')
-        line['references']=list(dict.fromkeys(line['references']))
-    if sum(len(line['text'].split()) for line in lines)>100:raise AssistanceUnavailable('The evidence answer exceeded its reviewable length.')
+    session = OverviewSession(llm)
+    try:
+        lines = session.invoke('draft', 'match_overview', ANSWER_PROMPT, context, schema, 700,
+                               lambda generated: draft_lines(generated, ids))
+    except OverviewUnavailable as error:
+        return unavailable_summary(service, result, sources, session, search_id, question, intent, str(error))
     fields=sorted({'RECORD_NAME'}|{field for source in sources for field in original_fields(source)})
     proof_schema={'type':'object','additionalProperties':False,'required':['supported_lines','answer_line','evidence'],'properties':{
         'supported_lines':{'type':'array','maxItems':2,'items':{'type':'integer','enum':[0,1]}},
         'answer_line':{'type':['integer','null'],'enum':[0,1,None]},
         'evidence':{'type':'array','maxItems':12,'items':{'type':'object','additionalProperties':False,'required':['line','id','field','quote'],'properties':{
             'line':{'type':'integer','enum':[0,1]},'id':{'type':'string','enum':ids},'field':{'type':'string','enum':fields},'quote':{'type':'string','maxLength':400}}}}}}
-    checked,extra=llm.invoke('match_grounding',CHECK_PROMPT,{**context,'draft':lines[:2]},proof_schema,1800)
+    try:
+        checked = session.invoke('grounding', 'match_grounding', CHECK_PROMPT, {**context,'draft':lines[:2]}, proof_schema, 1800,
+                                 lambda generated: checked_evidence(generated, lines, sources, fields))
+    except OverviewUnavailable as error:
+        return unavailable_summary(service, result, sources, session, search_id, question, intent, str(error))
     supported=checked.get('supported_lines',[]);quotes=checked.get('evidence',[])
-    if not isinstance(supported,list) or not isinstance(quotes,list):raise AssistanceUnavailable('The evidence answer could not be verified.')
     verified={}
     for index,line in enumerate(lines[:2]):
         if index not in supported:continue
@@ -145,12 +230,11 @@ def build_summary(service,result,llm,search_id):
         attached=any(coverage(source)['attachment_references'] for source in sources)
         ordered.append(({'text':'Referenced attachments are outside this export; additional findings and follow-up in those files were not reviewed.' if attached else f'This review covers {len(sources)} returned historical record(s); further findings and follow-up require source review.','references':fallback_refs},[]))
     ordered=ordered[:2]
-    usage={'model':extra.get('model',usage.get('model')),'input_tokens':usage.get('input_tokens',0)+extra.get('input_tokens',0),
-        'output_tokens':usage.get('output_tokens',0)+extra.get('output_tokens',0),'grounding_checked':True,**({'revision_pass':True} if usage.get('revision_pass') else {})}
     return {'search_id':search_id,'source_snapshot_id':result.get('source_snapshot_id',service.manifest.get('source_snapshot_id')),
         'lines':[value[0] for value in ordered]+[verified_capa_line(sources)],'reviewed_ids':ids,'returned_count':len(result['results']),
-        'usage':usage,'cached':False,'citations':[value[1] for value in ordered] if any(value[1] for value in ordered) else [],
+        'cached':False,'citations':[value[1] for value in ordered] if any(value[1] for value in ordered) else [],
         'is_question':question,'question_intent':intent,'answer_status':'answered' if answered else 'not_established' if question else 'overview',
         'answer_version':VERSION,'support_check':{'model_supported_sentences':len(supported),'verified_sentences':len(verified),'provided_quotes':len(quotes),'direct_answer_verified':bool(answered)},
         'reviewed_status_counts':status_counts(sources),
-        'evidence_coverage':[{'pr_id':source['pr_id'],**coverage(source)} for source in sources]}
+        'evidence_coverage':[{'pr_id':source['pr_id'],**coverage(source)} for source in sources],
+        **session.metadata('verified' if answered or not question and bool(verified) else 'insufficient_evidence')}
