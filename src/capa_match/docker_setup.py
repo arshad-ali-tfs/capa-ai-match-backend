@@ -160,7 +160,7 @@ def allowed_sites(setting, indexed):
 
 
 def index_contract(root):
-    files = ['src/match_v1/' + name + '.py' for name in ('core', 'index', 'ingest', 'search')]
+    files = ['src/match_v1/' + name + '.py' for name in ('core', 'index', 'ingest', 'search', 'scope')]
     files += ['src/capa_match/build.py', 'src/capa_match/identifiers.py']
     return {'versions': {name: importlib.metadata.version(name) for name in ('chromadb', 'onnxruntime', 'sentence-transformers')},
             'code': {name: hashlib.sha256((root / name).read_text(encoding='utf8').encode()).hexdigest()
@@ -209,7 +209,7 @@ def prepare_index(root, data, assets, source, limit, batch_size, rebuild, bundle
     if os.getenv('MATCH_MODEL_NAME', model) != model:
         raise ValueError('This launcher provisions the bundled MPNet checkpoint. Use a separate installation for another model.')
     policy = {'snapshot': source['snapshot_id'], 'model': model, 'revision': assets['embedding_revision'],
-              'runtime': 'onnx-fp32', 'division': 'DPD', 'limit': limit, 'chunk_size': 500, 'chunk_overlap': 50,
+              'runtime': 'onnx-fp32', 'division': os.getenv('MATCH_INDEX_DIVISION',''), 'status_scope': os.getenv('MATCH_INDEX_STATUS_SCOPE','all'), 'limit': limit, 'chunk_size': 500, 'chunk_overlap': 50,
               'text_fields': ['DETAILED_DESCRIPTION', 'CONCLUSION']}
     contract = index_contract(root)
     identity = hashlib.sha256(json.dumps([policy, contract], sort_keys=True).encode()).hexdigest()
@@ -234,7 +234,7 @@ def prepare_index(root, data, assets, source, limit, batch_size, rebuild, bundle
     if not existing or rebuild:
         print('Building the real Linux search index. First use can take time; chunk progress follows.', flush=True)
         arguments = ['--index-dir', str(target), '--limit', str(limit), '--batch-size', str(batch_size),
-                     '--runtime', 'onnx-fp32', '--model', model]
+                     '--runtime', 'onnx-fp32', '--model', model, '--division', policy['division'], '--status-scope', policy['status_scope']]
         if rebuild or target.exists():
             arguments.append('--rebuild')  # Retry an interrupted first generation without deleting it.
         build.main(arguments, use_dotenv=False)
