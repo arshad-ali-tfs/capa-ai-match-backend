@@ -93,6 +93,8 @@ class MatchExplorer:
         self.documents = {}
         self.chunks_by_id = {chunk['chunk_id']: chunk for chunk in service.chunks}
         self.title_vectors = {}
+        from .title_cache import TitleVectors
+        self.prepared_titles = TitleVectors(service, self.title_vectors)
         self._additional_loaded = False
         self._source_lock = Lock()
         for key, record in service.records.items():
@@ -208,12 +210,7 @@ class MatchExplorer:
 
     def rerank(self, rows, query_vectors):
         titles = {row['pr_id']: row.get('record_name', '').strip() for row in rows if row.get('record_name', '').strip()}
-        missing = [(key, text) for key, text in titles.items() if (key, text) not in self.title_vectors]
-        if missing:
-            vectors = unit_rows(self.service.embedder.encode([text for _, text in missing]))
-            if vectors.shape != (len(missing), 768):
-                raise RuntimeError('Event-title embeddings do not match the query model.')
-            self.title_vectors.update({(key, text): vector for (key, text), vector in zip(missing, vectors)})
+        self.prepared_titles.ensure(titles)
         for row in rows:
             vector = self.title_vectors.get((row['pr_id'], titles.get(row['pr_id'], '')))
             title_score = float(np.clip(np.max(query_vectors @ vector), 0, 1)) if vector is not None else None

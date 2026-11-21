@@ -255,6 +255,8 @@ class SearchIntelligence:
         self.overviews = BoundedCache(limit=64, ttl=900)
         self.rankings = BoundedCache(limit=128, ttl=900)
         self.cache_lock = Lock()
+        from .search_performance import SearchPerformance
+        self.performance = SearchPerformance(self, BoundedCache)
 
     @staticmethod
     def authority(service):
@@ -267,7 +269,7 @@ class SearchIntelligence:
         scope = resolve_scope(service, request, query)
         scope['filters']['divisions'] = requested_divisions(service,query,scope['filters']['divisions'])
         options = service.facets(site=request.site, all_sites=request.all_sites)
-        key = hashlib.sha256(json.dumps([VERSION, self.authority(service), scope['as_of'], request.model_dump(mode='json', exclude={'offset', 'top_k'})], sort_keys=True).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps([VERSION, self.authority(service), scope['as_of'], request.model_dump(mode='json', exclude={'offset', 'top_k', 'progressive'})], sort_keys=True).encode()).hexdigest()
         cached = self.plans.get(key)
         if cached:
             return deepcopy(cached)
@@ -349,7 +351,7 @@ class SearchIntelligence:
                 reviewed=verified
                 self.rankings.put(signature, reviewed)
             except AssistanceUnavailable:
-                return rows[:limit], None
+                return rows[:limit], None, 'local_ranking'
         by_id = {row['pr_id']: row for row in rows}
         selected = []
         for item in reviewed:
@@ -367,9 +369,12 @@ class SearchIntelligence:
                 quote = quote.rsplit(' ', 1)[0].rstrip()
             row['match_reasons'].append('Source evidence: “' + quote + '”' + ('…' if clipped else ''))
             selected.append(row)
-        return selected, usage
+        return selected, usage, 'ai_reviewed'
 
     def search(self, service, request):
+        return self.performance.run(service, request, self.retrieve)
+
+    def retrieve(self, service, request):
         query = request.query.strip()
         seed = None
         seed_match = re.search(r'\bsimilar\s+to\s+(?:deviation|record|PR)(?:\s*(?:ID|#|:))?\s*([A-Za-z0-9._-]+)', query, re.I)
@@ -387,6 +392,7 @@ class SearchIntelligence:
         exact_id = query.isdigit() or bool(re.fullmatch(r'(?:PR(?:_ID)?|deviation(?:\s+ID)?)(?:\s*[:#-]\s*|\s+)[A-Za-z0-9._-]+|PR\d+', query, re.I))
         literal = not query or request.mode != 'auto' or only_codes or exact_id or (query.startswith('"') and query.endswith('"'))
         plan = None
+        pending_candidates = None
         if literal:
             result = service.search(query, site=request.site, all_sites=request.all_sites, top_k=request.top_k,
                                     filters=request.filters.model_dump(mode='json'), mode=request.mode, offset=request.offset)
@@ -420,7 +426,15 @@ class SearchIntelligence:
                 rows[key]['rank_fusion'] = True  # UI shows rank/evidence rather than a pseudo-confidence percentage.
             if variants:
                 review_query = 'Find historical events comparable to this seed: '+seed_query if seed else query
-                reviewed, review_usage = self.review_candidates(service, review_query, [rows[key] for key in selected][:19 if seed else 20], request.top_k) if selected and (plan['origin'] == 'llm' or seed and self.llm.configured) else ([rows[key] for key in selected[:request.top_k]], None)
+                candidates = [rows[key] for key in selected][:19 if seed else 20]
+                eligible_review = selected and (plan['origin'] == 'llm' or seed and self.llm.configured)
+                if eligible_review and request.progressive:
+                    reviewed, review_usage = [rows[key] for key in selected[:request.top_k]], None
+                    pending_candidates = (candidates, review_query)
+                elif eligible_review:
+                    reviewed, review_usage, _ = self.review_candidates(service, review_query, candidates, request.top_k)
+                else:
+                    reviewed, review_usage = [rows[key] for key in selected[:request.top_k]], None
                 result = {**variants[0], 'results': reviewed, 'result_count': len(reviewed),
                       'limit': request.top_k, 'query': query,
                       'ranking_explanation': 'Original and clarified queries retrieve independently within the same hard filters. '
@@ -438,6 +452,8 @@ class SearchIntelligence:
         result['notices'] = plan['notices'] if plan else []
         result['review_state'] = ('ai_reviewed' if result.get('relevance_review_usage') or any(row.get('candidate_relationship') for row in result['results'])
                                   else 'local_ranking' if result.get('search_mode') in {'hybrid','semantic'} else 'not_required')
+        if pending_candidates is not None:
+            result['review_state'] = 'pending'
         if result['review_state']=='local_ranking' and not literal:
             result['notices'].append('AI relevance review was unavailable or could not be verified. These are local retrieval candidates for source review.')
         if result['question_intent']=='aggregate':
@@ -455,6 +471,18 @@ class SearchIntelligence:
                 result['notices'].append('This asks for an event count or trend. The current search supplies candidate records, not an exhaustive classified event count. Define and review the event population before comparing totals.')
         result['submitted_criteria'] = request.model_dump(mode='json')
         result['assistant_usage'] = plan['usage'] if plan else None
+        result['cache_hit'] = False
+        if pending_candidates is not None:
+            return self.performance.prepare(service, request, result, *pending_candidates)
+        return self.retain_result(service, result)
+
+    @staticmethod
+    def finalize_review_result(result):
+        if result.get('review_state') == 'local_ranking':
+            result['notices'].append('AI relevance review was unavailable or could not be verified. These are local retrieval candidates for source review.')
+        return result
+
+    def retain_result(self, service, result):
         search_id = uuid4().hex
         result['index_generation'] = index_generation(service.manifest)
         result['assistant_version'] = VERSION

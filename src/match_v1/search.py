@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 
 from .core import BM25, MockEmbedder, MPNetEmbedder, jaccard, split_chunks, tokenize, unit_rows, weighted_score
-
 from .scope import workflow_state
 
 LOG = logging.getLogger(__name__)
@@ -37,6 +36,7 @@ class MatchService:
         self.candidate_k = candidate_k
         self._corpus_caches = OrderedDict()
         self._corpus_lock = Lock()
+        self._lexical_index = None
         self._explorer = None
         self.source_ids = {key: key for key in records}
         self.additional_documents_loader = None
@@ -61,13 +61,17 @@ class MatchService:
         selected = set(sites)
         ids = None if record_ids is None else frozenset(key for key, row in self.records.items() if row['site'] in selected and key in record_ids)
         key = (sites, ids)
-        # Reuse the current filtered population, including the completed default.
-        # Keep one cohort: exploring divisions must not retain several large BM25s.
+        # Posting arrays are shared; each cohort retains only its own mapping
+        # and lengths. Its IDF and average length remain strictly scoped.
         with self._corpus_lock:
             if key not in self._corpus_caches:
+                from .lexical import LexicalIndex
+                if self._lexical_index is None:
+                    self._lexical_index = LexicalIndex(self.chunks)
                 subset = [c for c in self.chunks if c['site'] in selected and (ids is None or c['pr_id'] in ids)]
-                self._corpus_caches[key] = (subset, BM25([tokenize(c['doc']) for c in subset]))
-                while len(self._corpus_caches)>1:self._corpus_caches.popitem(last=False)
+                self._corpus_caches[key] = (subset, self._lexical_index.scope(subset))
+                while len(self._corpus_caches)>8:self._corpus_caches.popitem(last=False)
+            self._corpus_caches.move_to_end(key)
             return self._corpus_caches[key]
 
     def record(self, pr_id: str, site: str) -> dict:
@@ -87,6 +91,7 @@ class MatchService:
                                      required_identifiers=required_identifiers, force_ranked=force_ranked)
 
     def search_legacy(self, query, *, site=None, all_sites=False, top_k=10):
+        # AUTHOR and existing narrative clients retain completed-case precedents.
         completed = {key for key, record in self.records.items() if workflow_state(record.get('status')) == 'completed'}
         return self._hybrid_search(query, site=site, all_sites=all_sites, top_k=top_k, record_ids=None if len(completed)==len(self.records) else completed)
 
