@@ -42,7 +42,7 @@ def test_repeated_bad_output_terminates_with_honest_unavailable_message_not_clai
     llm=Scripted(**{phase+'_failures':99})
     value=run('Why did the failure happen?',llm)
     assert value['verification_status']=='unavailable' and value['answer_status']=='not_established'
-    assert value['verification_attempts'][phase]==2 and len(llm.calls)<=3
+    assert value['verification_attempts'][phase]==3 and len(llm.calls)<=4
     assert not value['citations'] and 'records lack an answer' in value['lines'][1]['text']
     assert 'Private' not in str(value) and 'Investigation' not in str(value['lines'])
 
@@ -78,7 +78,7 @@ def test_inline_citation_outside_verified_reference_list_requires_repair():
 def test_invented_supporting_quote_is_retried_once_and_never_published_as_an_answer():
     llm=AnswerLLM();llm.bad_quote=True
     value=run('What actions were taken?',llm)
-    assert value['verification_status']=='unavailable' and value['verification_attempts']=={'draft':1,'grounding':2}
+    assert value['verification_status']=='unavailable' and value['verification_attempts']=={'draft':1,'grounding':3}
     assert not value['citations'] and 'corrected the needle-wash' not in str(value['lines'])
 
 
@@ -138,3 +138,33 @@ def test_provider_socket_timeout_is_clamped_to_overview_budget(monkeypatch):
     try:StructuredLLM().invoke('match_overview','',{}, {},50)
     finally:_deadline.reset(token)
     assert 0<seen[0]<=1
+
+
+def test_service_hiccup_does_not_consume_draft_or_grounding_repair_allowances():
+    class Combined(AnswerLLM):
+        def __init__(self):super().__init__();self.number=0
+        def invoke(self,name,instructions,data,schema,max_tokens):
+            self.number+=1
+            if self.number==1:
+                self.calls.append((name,instructions,data,schema));raise AssistanceUnavailable('Temporary test outage')
+            if self.number in {2,4}:
+                self.calls.append((name,instructions,data,schema));return {},{'input_tokens':1,'output_tokens':1}
+            return super().invoke(name,instructions,data,schema,max_tokens)
+    llm=Combined();value=run('What actions were taken?',llm)
+    assert value['answer_status']=='answered' and value['verification_status']=='verified'
+    assert value['verification_attempts']=={'draft':3,'grounding':2}
+    assert value['verification_provider_retries']==1 and value['verification_retries']==3 and len(llm.calls)==5
+
+
+def test_provider_retry_allowance_is_shared_across_both_stages():
+    llm=Scripted(draft_failures=1,grounding_failures=1,failure='transport')
+    value=run('What actions were taken?',llm)
+    assert value['verification_status']=='unavailable' and value['verification_provider_retries']==1
+    assert value['verification_attempts']=={'draft':2,'grounding':1} and len(llm.calls)==3
+
+
+def test_unused_transport_recovery_can_repair_a_second_format_failure_without_exceeding_five_calls():
+    llm=Scripted(draft_failures=2,grounding_failures=1)
+    value=run('What actions were taken?',llm)
+    assert value['verification_status']=='verified' and value['answer_status']=='answered'
+    assert value['verification_attempts']=={'draft':3,'grounding':2} and len(llm.calls)==5

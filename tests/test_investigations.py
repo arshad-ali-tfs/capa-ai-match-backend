@@ -89,5 +89,5 @@ def test_unsupported_summary_claim_is_removed_when_no_original_quote_supports_it
     result=helper.search(service,SearchRequest(query='101',all_sites=True,assist=True))
     summary=helper.overview(service,result['summary_id'])
     assert summary['verification_status']=='unavailable' and not summary['citations']
-    assert summary['verification_attempts']['grounding']==2
+    assert summary['verification_attempts']['grounding']==3
     assert 'Invented patient impact' not in str(summary['lines'])

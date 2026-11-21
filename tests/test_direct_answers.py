@@ -59,14 +59,14 @@ def test_invented_quote_cannot_turn_a_plausible_answer_into_verified_evidence():
     assert summary['answer_status']=='not_established'
     assert 'corrected the needle-wash' not in str(summary['lines'])
     assert summary['verification_status']=='unavailable'
-    assert summary['verification_attempts']['grounding']==2
+    assert summary['verification_attempts']['grounding']==3
 
 
 def test_unknown_ids_are_rejected_before_publishing_an_answer():
     llm=AnswerLLM();llm.bad_refs=True
     summary=run('What was done?',llm)
     assert summary['verification_status']=='unavailable' and not summary['citations']
-    assert summary['verification_attempts']=={'draft':2,'grounding':0}
+    assert summary['verification_attempts']=={'draft':3,'grounding':0}
     assert 'INVENTED' not in str(summary)
 
 
