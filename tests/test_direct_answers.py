@@ -18,9 +18,10 @@ class AnswerLLM:
                    {'text':'Investigators attributed the failure to an incorrect needle-wash setting.','references':['1']}]
             if self.bad_refs:lines[0]['references']=['INVENTED']
             return {'lines':lines},{'input_tokens':20,'output_tokens':20}
+        def selected(quote):return next(proof['passage_id'] for proof in data['evidence_catalog'] if proof['quote']==quote)
         return {'supported_lines':[] if self.no_support else [0,1],'answer_line':None if self.no_support else self.answer_line,
-                'evidence':[{'line':0,'id':'1','field':'DETAILED_DESCRIPTION','quote':'An invented improvement was implemented.' if self.bad_quote else ACTION},
-                            {'line':1,'id':'1','field':'DETAILED_DESCRIPTION','quote':CAUSE}]},{'input_tokens':20,'output_tokens':20}
+                'evidence':[] if self.no_support else [{'line':0,'passage_id':'INVENTED' if self.bad_quote else selected(ACTION)},
+                                                     {'line':1,'passage_id':selected(CAUSE)}]},{'input_tokens':20,'output_tokens':20}
 
 
 def run(query,llm=None):

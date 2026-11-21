@@ -83,7 +83,7 @@ def test_temporal_query_is_not_a_direct_match_merely_because_an_asset_matches():
 def test_unsupported_summary_claim_is_removed_when_no_original_quote_supports_it():
     service=explorer();llm=FakeLLM();original=llm.invoke
     def ungrounded(name,*args):
-        if name=='match_grounding':return {'supported_lines':[0,1],'answer_line':None,'evidence':[{'line':0,'id':'101','field':'CONCLUSION','quote':'Invented patient impact and successful effectiveness.'}]},{}
+        if name=='match_grounding':return {'supported_lines':[0,1],'answer_line':None,'evidence':[{'line':0,'passage_id':'INVENTED'}]},{}
         return original(name,*args)
     llm.invoke=ungrounded;helper=SearchIntelligence(llm)
     result=helper.search(service,SearchRequest(query='101',all_sites=True,assist=True))

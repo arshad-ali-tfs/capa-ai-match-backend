@@ -27,7 +27,7 @@ class FakeLLM:
         if name == 'match_relevance':
             return {'ranked':[{'id':row['id'],'relationship':'related','evidence':row['title'] or row['description'][:120]} for row in data['records'][:data['maximum_results']]]}, {'input_tokens':30,'output_tokens':20}
         if name == 'match_grounding':
-            return {'supported_lines':[0,1],'answer_line':None,'evidence':[{'line':index,'id':data['records'][0]['id'],'field':'RECORD_NAME','quote':data['records'][0]['title']} for index in [0,1]]},{'input_tokens':20,'output_tokens':20}
+            return {'supported_lines':[0,1],'answer_line':None,'evidence':[{'line':index,'passage_id':next(proof['passage_id'] for proof in data['evidence_catalog'] if proof['record_id']==data['records'][0]['id'] and proof['field']=='RECORD_NAME')} for index in [0,1]]},{'input_tokens':20,'output_tokens':20}
         refs = ['UNKNOWN'] if self.invalid_refs else [data['records'][0]['id']]
         return {'lines': [{'text': text, 'references': refs} for text in [
             'The selected historical record describes a calibration event.',
